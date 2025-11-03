@@ -125,7 +125,7 @@ class TradePilotEngine:
 
         # Volatility (10%)
         vol_regime = layers["layer_8_volatility_regime"]["regime"]
-        vol_signal = 1 if vol_regime in ["LOW", "NORMAL"] else -1 if vol_regime == "EXTREME"] else 0
+        vol_signal = 1 if vol_regime in ["LOW", "NORMAL"] else -1 if vol_regime == "EXTREME" else 0
         signals.append(vol_signal)
         weights.append(0.10)
 
