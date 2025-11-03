@@ -8,7 +8,6 @@ load_dotenv()
 API_KEY = os.getenv("POLYGON_API_KEY")
 BASE_URL = "https://api.polygon.io"
 
-
 # ---------------- Core endpoints ----------------
 
 def get_symbol_lookup(query: str):
@@ -19,14 +18,54 @@ def get_symbol_lookup(query: str):
 def get_candles(symbol: str, tf: str = "day", limit: int = 730):
     """
     Get OHLCV candles dynamically (default = 730 days ≈ 2 years).
+    Applies a 20-minute offset for Developer-tier intraday requests
+    to account for delayed Polygon data availability.
     """
-    end_date = datetime.utcnow().date()
-    start_date = end_date - timedelta(days=limit)
+    now_utc = datetime.utcnow()
+
+    # Apply 20-min offset for intraday timeframes
+    if tf in ["minute", "hour"]:
+        end_time = now_utc - timedelta(minutes=20)
+    else:
+        end_time = now_utc
+
+    # Compute start time based on timeframe and limit
+    if tf == "minute":
+        start_time = end_time - timedelta(minutes=limit)
+    elif tf == "hour":
+        start_time = end_time - timedelta(hours=limit)
+    elif tf == "day":
+        start_time = end_time - timedelta(days=limit)
+    else:
+        raise ValueError("Invalid timeframe provided")
+
+    # Format to YYYY-MM-DD for Polygon API
+    start = start_time.strftime("%Y-%m-%d")
+    end = end_time.strftime("%Y-%m-%d")
+
+    # Build Polygon Aggregates URL
     url = (
-        f"{BASE_URL}/v2/aggs/ticker/{symbol}/range/1/{tf}/{start_date}/{end_date}"
-        f"?limit={limit}&apiKey={API_KEY}"
+        f"{BASE_URL}/v2/aggs/ticker/{symbol}/range/1/{tf}/{start}/{end}"
+        f"?adjusted=true&sort=asc&limit={limit}&apiKey={API_KEY}"
     )
-    return requests.get(url).json()
+
+    response = requests.get(url)
+    data = response.json()
+
+    # Gracefully handle delayed or empty responses
+    if not data.get("results") or data.get("resultsCount", 0) == 0:
+        data["status"] = "DELAYED"
+        data["message"] = (
+            "No recent candles yet — Developer tier delay window active (≈20 min)"
+        )
+
+    # Optional: Debug log (safe to remove in production)
+    print(
+        f"[Polygon Fetch] {symbol} | TF={tf} | Start={start} | End={end} | "
+        f"Status={data.get('status', 'OK')}"
+    )
+
+    return data
 
 
 def get_news(symbol: str):
@@ -60,7 +99,6 @@ def get_previous_day_bar(ticker: str):
 def get_single_stock_snapshot(ticker: str):
     url = f"{BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}?apiKey={API_KEY}"
     return requests.get(url).json()
-
 
 # ---------------- Options endpoints ----------------
 
