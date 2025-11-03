@@ -38,9 +38,8 @@ class TradePilotEngine:
             "layer_10_candle_intelligence": Layer10CandleIntelligence()
         }
 
-        """
-        Run full analysis through all 10 layers
-        """
+    def analyze(self, candles_data: Dict, symbol: str, timeframe: str = "day") -> Dict:
+        """Run full analysis through all 10 layers"""
         df = self.data_processor.polygon_to_dataframe(candles_data)
 
         if df is None or not self.data_processor.validate_data(df):
@@ -62,7 +61,7 @@ class TradePilotEngine:
             "layers": {}
         }
 
-        # Layer executions
+        # Run all analysis layers
         results["layers"]["layer_1_momentum"] = self.layers["layer_1_momentum"].analyze(df)
         results["layers"]["layer_2_volume"] = self.layers["layer_2_volume"].analyze(df)
         results["layers"]["layer_3_divergence"] = self.layers["layer_3_divergence"].analyze(df)
@@ -78,9 +77,7 @@ class TradePilotEngine:
         return clean_for_json(results)
 
     def get_signal_summary(self, candles_data: Dict, symbol: str) -> Dict:
-        """
-        Get condensed signal summary for quick decision making
-        """
+        """Get condensed signal summary for quick decision making"""
         full_analysis = self.analyze(candles_data, symbol)
 
         if "error" in full_analysis:
@@ -107,9 +104,7 @@ class TradePilotEngine:
         return clean_for_json(summary)
 
     def _generate_overall_signal(self, layers: Dict) -> Dict:
-        """
-        Generate overall signal based on all layer outputs
-        """
+        """Generate overall signal based on all layer outputs"""
         signals = []
         weights = []
 
