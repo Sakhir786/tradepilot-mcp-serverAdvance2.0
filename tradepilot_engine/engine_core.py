@@ -1,6 +1,55 @@
 """
 TradePilot Engine Core - Orchestrates all 10 analysis layers
 """
+<<<<<<< HEAD
+=======
+
+import pandas as pd
+from typing import Dict, List, Optional
+from .data_processor import DataProcessor
+from .json_utils import clean_for_json
+from .layers import (
+    Layer1Momentum,
+    Layer2Volume,
+    Layer3Divergence,
+    Layer4VolumeStrength,
+    Layer5Trend,
+    Layer6Structure,
+    Layer7Liquidity,
+    Layer8VolatilityRegime,
+    Layer9Confirmation,
+    Layer10CandleIntelligence
+)
+
+
+class TradePilotEngine:
+    """Main engine that runs all 10 layers of technical analysis"""
+
+"""
+TradePilot Engine Core - Orchestrates all 10 analysis layers
+"""
+
+import pandas as pd
+from typing import Dict, List, Optional
+from .data_processor import DataProcessor
+from .json_utils import clean_for_json
+from .layers import (
+    Layer1Momentum,
+    Layer2Volume,
+    Layer3Divergence,
+    Layer4VolumeStrength,
+    Layer5Trend,
+    Layer6Structure,
+    Layer7Liquidity,
+    Layer8VolatilityRegime,
+    Layer9Confirmation,
+    Layer10CandleIntelligence
+)
+
+
+class TradePilotEngine:
+    """Main engine that runs all 10 layers of technical analysis"""
+>>>>>>> 704bbfc (Fix: Clean engine_core.py and restore TradePilotEngine class structure)
 
 import pandas as pd
 from typing import Dict, List, Optional
