@@ -38,7 +38,6 @@ class TradePilotEngine:
             "layer_10_candle_intelligence": Layer10CandleIntelligence()
         }
 
-    def analyze(self, candles_data: Dict, symbol: str, timeframe: str = "day") -> Dict:
         """
         Run full analysis through all 10 layers
         """
