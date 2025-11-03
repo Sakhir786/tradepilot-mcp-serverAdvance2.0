@@ -15,6 +15,7 @@ router = APIRouter(prefix="/engine", tags=["TradePilot Engine"])
 # Initialize engine
 engine = TradePilotEngine()
 
+
 @router.get("/analyze")
 async def analyze_symbol(
     symbol: str = Query(..., description="Stock symbol (e.g., AAPL)"),
@@ -27,23 +28,50 @@ async def analyze_symbol(
     Returns comprehensive analysis from all layers
     """
     try:
-        # Fetch candles from Polygon
+        # Fetch candles (Massive API compatible)
         candles_data = get_candles(symbol.upper(), tf=tf, limit=limit)
-        
-        if not candles_data or "results" not in candles_data:
-            raise HTTPException(status_code=400, detail="Unable to fetch candle data")
-        
-        if len(candles_data["results"]) == 0:
-            raise HTTPException(status_code=400, detail="No candle data available")
-        
-        # Run analysis
-        results = engine.analyze(candles_data, symbol.upper(), tf)
-        
+
+        # --- Safe data check ---
+        if not candles_data or "results" not in candles_data or len(candles_data["results"]) == 0:
+            raise HTTPException(status_code=400, detail=f"No candle data returned for {symbol}")
+
+        # --- Clean structure for engine ---
+        clean_candles = [
+            {
+                "t": c.get("t"),
+                "o": c.get("o"),
+                "h": c.get("h"),
+                "l": c.get("l"),
+                "c": c.get("c"),
+                "v": c.get("v"),
+            }
+            for c in candles_data["results"]
+        ]
+
+        if len(clean_candles) < 10:
+            raise HTTPException(status_code=400, detail=f"Not enough candles for analysis ({len(clean_candles)})")
+
+        # --- Auto Mode Detection ---
+        if tf == "minute":
+            mode_label = "⚡ SCALP PLAY (1–2 hr window)"
+        elif tf == "hour":
+            mode_label = "📈 INTRADAY PLAY (1–6 hr window)"
+        else:
+            mode_label = "📆 SWING PLAY (Multi-day window)"
+
+        print(f"[Engine] {mode_label} → {symbol.upper()} | {len(clean_candles)} candles")
+
+        # --- Run analysis ---
+        results = engine.analyze({"results": clean_candles}, symbol.upper(), tf)
+
         if "error" in results:
             raise HTTPException(status_code=400, detail=results["error"])
-        
+
+        # Attach mode label to response
+        results["mode"] = mode_label
+
         return results
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
@@ -62,18 +90,18 @@ async def get_signal_summary(
     try:
         # Fetch candles
         candles_data = get_candles(symbol.upper(), tf=tf, limit=limit)
-        
+
         if not candles_data or "results" not in candles_data:
             raise HTTPException(status_code=400, detail="Unable to fetch candle data")
-        
+
         # Get summary
         summary = engine.get_signal_summary(candles_data, symbol.upper())
-        
+
         if "error" in summary:
             raise HTTPException(status_code=400, detail=summary["error"])
-        
+
         return summary
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Summary failed: {str(e)}")
 
@@ -104,32 +132,32 @@ async def get_layer_analysis(
         # Validate layer name
         if layer_name not in engine.layers:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"Invalid layer name. Available: {list(engine.layers.keys())}"
             )
-        
+
         # Fetch candles
         candles_data = get_candles(symbol.upper(), tf=tf, limit=limit)
-        
+
         if not candles_data or "results" not in candles_data:
             raise HTTPException(status_code=400, detail="Unable to fetch candle data")
-        
+
         # Run full analysis to get the layer result
         full_results = engine.analyze(candles_data, symbol.upper(), tf)
-        
+
         if "error" in full_results:
             raise HTTPException(status_code=400, detail=full_results["error"])
-        
+
         # Return specific layer
         layer_result = full_results["layers"].get(layer_name, {})
-        
+
         return {
             "symbol": symbol.upper(),
             "timeframe": tf,
             "layer": layer_name,
             "result": layer_result
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
