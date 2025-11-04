@@ -61,7 +61,7 @@ class DataProcessor:
         return df
     
     @staticmethod
-    def validate_data(df: pd.DataFrame, min_bars: int = 200) -> bool:
+    def validate_data(df: pd.DataFrame, min_bars: int = 150) -> bool:
         """
         Validate that DataFrame has sufficient data for analysis
         
