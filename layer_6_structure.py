@@ -1,7 +1,7 @@
 """
-Layer 6: Market Structure Engine
+Layer 6: Market Structure Engine (Raw Data Output)
 CHoCH, BOS, Order Blocks, Fair Value Gaps, and Liquidity Detection
-Converted from Pine Script - Logic unchanged
+Outputs RAW structure data only - no scores, no signals
 """
 import pandas as pd
 import numpy as np
@@ -13,14 +13,12 @@ class Layer6Structure:
     Professional Market Structure analysis with Smart Money Concepts.
     
     Features:
-    - CHoCH (Change of Character) detection with quality scoring
-    - BOS (Break of Structure) detection with quality scoring
-    - Order Block identification with mitigation tracking
-    - Fair Value Gap (FVG) detection with quality scoring
+    - CHoCH (Change of Character) detection
+    - BOS (Break of Structure) detection
+    - Order Block identification
+    - Fair Value Gap (FVG) detection
     - Liquidity Sweep detection
-    - Market bias classification (TRENDING/REVERSING/RANGING)
     - Volume delta analysis
-    - Quality scoring for all patterns
     """
     
     def __init__(self):
@@ -65,7 +63,7 @@ class Layer6Structure:
             df: DataFrame with OHLCV data
             
         Returns:
-            Dict with CHoCH, BOS, OB, FVG, and liquidity metrics
+            Dict with RAW CHoCH, BOS, OB, FVG, and liquidity data
         """
         if len(df) < 50:
             return self._empty_result("Insufficient data")
@@ -101,30 +99,97 @@ class Layer6Structure:
         # Detect Liquidity Sweeps
         liq_data = self._detect_liquidity(df, pivot_data, avg_volume)
         
-        # Calculate market bias
-        bias_data = self._calculate_market_bias(structure_data, ob_data)
+        # Calculate raw counts for bias context
+        bias_data = self._calculate_raw_bias_data(structure_data)
         
+        # Return RAW DATA ONLY - no scores, no signals
         return {
-            "choch_bos": structure_data,
-            "order_blocks": ob_data,
-            "fvg": fvg_data,
-            "liquidity": liq_data,
-            "bias": bias_data,
-            "trend_ema": float(trend_ema.iloc[-1]),
-            "is_uptrend": is_uptrend,
+            # Pivot Data
+            "last_pivot_high": pivot_data["last_ph"],
+            "last_pivot_low": pivot_data["last_pl"],
+            "last_pivot_high_index": pivot_data["last_ph_index"],
+            "last_pivot_low_index": pivot_data["last_pl_index"],
+            "pivot_high_count": len(pivot_data["pivot_highs"]),
+            "pivot_low_count": len(pivot_data["pivot_lows"]),
+            
+            # CHoCH Detection
+            "choch_bull_detected": structure_data["choch_bull_detected"],
+            "choch_bear_detected": structure_data["choch_bear_detected"],
+            "choch_bull_quality": structure_data["bull_quality"] if structure_data["choch_bull_detected"] else 0,
+            "choch_bear_quality": structure_data["bear_quality"] if structure_data["choch_bear_detected"] else 0,
+            "choch_bull_delta": structure_data["bull_delta"] if structure_data["choch_bull_detected"] else 0,
+            "choch_bear_delta": structure_data["bear_delta"] if structure_data["choch_bear_detected"] else 0,
+            
+            # BOS Detection
+            "bos_bull_detected": structure_data["bos_bull_detected"],
+            "bos_bear_detected": structure_data["bos_bear_detected"],
+            "bos_bull_quality": structure_data["bull_quality"] if structure_data["bos_bull_detected"] else 0,
+            "bos_bear_quality": structure_data["bear_quality"] if structure_data["bos_bear_detected"] else 0,
+            "bos_bull_delta": structure_data["bull_delta"] if structure_data["bos_bull_detected"] else 0,
+            "bos_bear_delta": structure_data["bear_delta"] if structure_data["bos_bear_detected"] else 0,
+            
+            # Structure Totals
+            "total_choch_bull": structure_data["total_choch_bull"],
+            "total_choch_bear": structure_data["total_choch_bear"],
+            "total_bos_bull": structure_data["total_bos_bull"],
+            "total_bos_bear": structure_data["total_bos_bear"],
+            "current_trend": structure_data["current_trend"],
+            
+            # Order Block Data
+            "ob_bull_detected": ob_data["ob_bull_detected"],
+            "ob_bear_detected": ob_data["ob_bear_detected"],
+            "ob_bull_quality": ob_data["ob_bull_quality"],
+            "ob_bear_quality": ob_data["ob_bear_quality"],
+            "ob_bull_top": ob_data["ob_bull_top"],
+            "ob_bull_btm": ob_data["ob_bull_btm"],
+            "ob_bear_top": ob_data["ob_bear_top"],
+            "ob_bear_btm": ob_data["ob_bear_btm"],
+            "total_ob_bull": ob_data["total_ob_bull"],
+            "total_ob_bear": ob_data["total_ob_bear"],
+            
+            # FVG Data
+            "fvg_bull_detected": fvg_data["fvg_bull_detected"],
+            "fvg_bear_detected": fvg_data["fvg_bear_detected"],
+            "fvg_bull_quality": fvg_data["fvg_bull_quality"],
+            "fvg_bear_quality": fvg_data["fvg_bear_quality"],
+            "fvg_bull_top": fvg_data["fvg_bull_top"],
+            "fvg_bull_btm": fvg_data["fvg_bull_btm"],
+            "fvg_bear_top": fvg_data["fvg_bear_top"],
+            "fvg_bear_btm": fvg_data["fvg_bear_btm"],
+            "total_fvg_bull": fvg_data["total_fvg_bull"],
+            "total_fvg_bear": fvg_data["total_fvg_bear"],
+            
+            # Liquidity Data
+            "liq_buy_detected": liq_data["liq_buy_detected"],
+            "liq_sell_detected": liq_data["liq_sell_detected"],
+            "liq_buy_level": liq_data["liq_buy_level"],
+            "liq_sell_level": liq_data["liq_sell_level"],
+            
+            # Bias Raw Counts (for AI interpretation)
+            "total_bullish_patterns": bias_data["total_bull"],
+            "total_bearish_patterns": bias_data["total_bear"],
+            "total_choch": bias_data["total_choch"],
+            "total_bos": bias_data["total_bos"],
+            "choch_bos_ratio": bias_data["choch_bos_ratio"],
+            "bull_bear_ratio": bias_data["bull_bear_ratio"],
+            
+            # Trend Context
+            "trend_ema": round(float(trend_ema.iloc[-1]), 2),
+            "price_vs_trend_ema": round(float(df['close'].iloc[-1] - trend_ema.iloc[-1]), 2),
+            "is_above_trend_ema": is_uptrend,
+            "atr": round(float(atr_val[-1]), 4),
+            
+            # Price Context
+            "current_price": round(df["close"].iloc[-1], 2),
+            
+            # Timestamp
             "timestamp": df.index[-1] if isinstance(df.index, pd.DatetimeIndex) else datetime.now()
         }
     
     # ==================== PIVOT DETECTION ====================
     
     def _detect_pivots(self, df: pd.DataFrame) -> Dict:
-        """
-        Detect pivot highs and lows
-        
-        Pine Script logic:
-        - pivotH = ta.pivothigh(len, len)
-        - pivotL = ta.pivotlow(len, len)
-        """
+        """Detect pivot highs and lows"""
         high = df['high'].values
         low = df['low'].values
         
@@ -138,13 +203,11 @@ class Layer6Structure:
             is_pivot_high = True
             center_high = high[i]
             
-            # Check left side
             for j in range(1, self.pivot_length + 1):
                 if high[i - j] >= center_high:
                     is_pivot_high = False
                     break
             
-            # Check right side
             if is_pivot_high:
                 for j in range(1, self.pivot_length + 1):
                     if high[i + j] >= center_high:
@@ -160,13 +223,11 @@ class Layer6Structure:
             is_pivot_low = True
             center_low = low[i]
             
-            # Check left side
             for j in range(1, self.pivot_length + 1):
                 if low[i - j] <= center_low:
                     is_pivot_low = False
                     break
             
-            # Check right side
             if is_pivot_low:
                 for j in range(1, self.pivot_length + 1):
                     if low[i + j] <= center_low:
@@ -177,7 +238,6 @@ class Layer6Structure:
                 pivot_lows.append(center_low)
                 pivot_low_indices.append(i)
         
-        # Get last pivots
         last_ph = pivot_highs[-1] if len(pivot_highs) > 0 else None
         last_pl = pivot_lows[-1] if len(pivot_lows) > 0 else None
         last_ph_index = pivot_high_indices[-1] if len(pivot_high_indices) > 0 else None
@@ -211,14 +271,7 @@ class Layer6Structure:
     def _detect_choch_bos(self, df: pd.DataFrame, pivot_data: Dict,
                           is_uptrend: bool, avg_volume: pd.Series,
                           atr_val: np.ndarray) -> Dict:
-        """
-        Detect Change of Character (CHoCH) and Break of Structure (BOS)
-        
-        Pine Script logic:
-        - CHoCH: Trend reversal (trend changes sign)
-        - BOS: Trend continuation (trend same sign but stronger)
-        - Quality scoring based on volume delta, volume ratio, trend alignment, ATR
-        """
+        """Detect Change of Character (CHoCH) and Break of Structure (BOS)"""
         high = df['high'].values
         low = df['low'].values
         close = df['close'].values
@@ -246,7 +299,6 @@ class Layer6Structure:
         # Check for bullish CHoCH/BOS (crossover pivot high)
         if last_ph is not None and last_ph_index is not None:
             if high[-1] > last_ph:
-                # Calculate metrics from pivot to current
                 l = low[-1]
                 delta = 0.0
                 max_vol = 0.0
@@ -258,7 +310,7 @@ class Layer6Structure:
                     delta += volume[idx] if close[idx] > open_[idx] else -volume[idx]
                     max_vol = max(max_vol, volume[idx])
                 
-                # Quality scoring (EXACT Pine Script logic)
+                # Quality calculation (deterministic)
                 quality = 50.0
                 abs_delta = abs(delta)
                 
@@ -284,7 +336,6 @@ class Layer6Structure:
                 
                 quality = min(quality, 100)
                 
-                # Determine if CHoCH or BOS
                 is_choch = self.trend <= 0
                 is_bos = self.trend > 0
                 
@@ -299,13 +350,11 @@ class Layer6Structure:
                     bull_quality = quality
                     bull_delta = delta
                 
-                # Update trend
                 self.trend = 1
         
         # Check for bearish CHoCH/BOS (crossunder pivot low)
         if last_pl is not None and last_pl_index is not None:
             if low[-1] < last_pl:
-                # Calculate metrics from pivot to current
                 h = high[-1]
                 delta = 0.0
                 max_vol = 0.0
@@ -317,7 +366,6 @@ class Layer6Structure:
                     delta += volume[idx] if close[idx] > open_[idx] else -volume[idx]
                     max_vol = max(max_vol, volume[idx])
                 
-                # Quality scoring
                 quality = 50.0
                 abs_delta = abs(delta)
                 
@@ -343,7 +391,6 @@ class Layer6Structure:
                 
                 quality = min(quality, 100)
                 
-                # Determine if CHoCH or BOS
                 is_choch = self.trend >= 0
                 is_bos = self.trend < 0
                 
@@ -358,7 +405,6 @@ class Layer6Structure:
                     bear_quality = quality
                     bear_delta = delta
                 
-                # Update trend
                 self.trend = -1
         
         return {
@@ -382,14 +428,7 @@ class Layer6Structure:
     def _detect_order_blocks(self, df: pd.DataFrame, pivot_data: Dict,
                              is_uptrend: bool, avg_volume: pd.Series,
                              atr_val: np.ndarray) -> Dict:
-        """
-        Detect Order Blocks (last candle before strong move)
-        
-        Pine Script logic:
-        - Bullish OB: Last down candle before up sequence
-        - Bearish OB: Last up candle before down sequence
-        - Quality scoring based on volume and trend
-        """
+        """Detect Order Blocks (last candle before strong move)"""
         close = df['close'].values
         open_ = df['open'].values
         high = df['high'].values
@@ -408,9 +447,8 @@ class Layer6Structure:
         ob_bear_top = 0.0
         ob_bear_btm = 0.0
         
-        # Detect bullish order block (crossover pivot high)
+        # Detect bullish order block
         if last_ph is not None and close[-1] > last_ph:
-            # Get last candle data
             ob_high = high[-2]
             ob_low = low[-2]
             
@@ -422,7 +460,6 @@ class Layer6Structure:
                 delta += volume[idx] if close[idx] > open_[idx] else -volume[idx]
                 max_vol = max(max_vol, volume[idx])
             
-            # Quality scoring
             quality = 50.0
             if abs(delta) > 1000000:
                 quality += 15
@@ -450,9 +487,8 @@ class Layer6Structure:
                 ob_bull_btm = ob_low
                 self.total_ob_bull += 1
         
-        # Detect bearish order block (crossunder pivot low)
+        # Detect bearish order block
         if last_pl is not None and close[-1] < last_pl:
-            # Get last candle data
             ob_high = high[-2]
             ob_low = low[-2]
             
@@ -464,7 +500,6 @@ class Layer6Structure:
                 delta += volume[idx] if close[idx] > open_[idx] else -volume[idx]
                 max_vol = max(max_vol, volume[idx])
             
-            # Quality scoring
             quality = 50.0
             if abs(delta) > 1000000:
                 quality += 15
@@ -497,10 +532,10 @@ class Layer6Structure:
             "ob_bear_detected": ob_bear_detected,
             "ob_bull_quality": ob_bull_quality,
             "ob_bear_quality": ob_bear_quality,
-            "ob_bull_top": float(ob_bull_top),
-            "ob_bull_btm": float(ob_bull_btm),
-            "ob_bear_top": float(ob_bear_top),
-            "ob_bear_btm": float(ob_bear_btm),
+            "ob_bull_top": round(float(ob_bull_top), 2),
+            "ob_bull_btm": round(float(ob_bull_btm), 2),
+            "ob_bear_top": round(float(ob_bear_top), 2),
+            "ob_bear_btm": round(float(ob_bear_btm), 2),
             "total_ob_bull": self.total_ob_bull,
             "total_ob_bear": self.total_ob_bear
         }
@@ -509,14 +544,7 @@ class Layer6Structure:
     
     def _detect_fvg(self, df: pd.DataFrame, is_uptrend: bool,
                     avg_volume: pd.Series, atr_val: np.ndarray) -> Dict:
-        """
-        Detect Fair Value Gaps
-        
-        Pine Script logic:
-        - Bullish FVG: low > high[2] and close[1] > high[2]
-        - Bearish FVG: high < low[2] and close[1] < low[2]
-        - Threshold % for minimum gap size
-        """
+        """Detect Fair Value Gaps"""
         high = df['high'].values
         low = df['low'].values
         close = df['close'].values
@@ -528,13 +556,15 @@ class Layer6Structure:
                 "fvg_bear_detected": False,
                 "fvg_bull_quality": 0,
                 "fvg_bear_quality": 0,
+                "fvg_bull_top": 0.0,
+                "fvg_bull_btm": 0.0,
+                "fvg_bear_top": 0.0,
+                "fvg_bear_btm": 0.0,
                 "total_fvg_bull": self.total_fvg_bull,
                 "total_fvg_bear": self.total_fvg_bear
             }
         
-        # Calculate threshold (auto or manual)
         if self.fvg_threshold == 0:
-            # Auto threshold: average (high-low)/low
             threshold = np.mean((high - low) / low)
         else:
             threshold = self.fvg_threshold / 100
@@ -558,7 +588,6 @@ class Layer6Structure:
                 
                 delta_vol = volume[-1] - volume[-2]
                 
-                # Quality scoring
                 quality = 50.0
                 avg_vol_val = avg_volume.iloc[-1]
                 
@@ -594,7 +623,6 @@ class Layer6Structure:
                 
                 delta_vol = volume[-1] - volume[-2]
                 
-                # Quality scoring
                 quality = 50.0
                 avg_vol_val = avg_volume.iloc[-1]
                 
@@ -625,10 +653,10 @@ class Layer6Structure:
             "fvg_bear_detected": fvg_bear_detected,
             "fvg_bull_quality": fvg_bull_quality,
             "fvg_bear_quality": fvg_bear_quality,
-            "fvg_bull_top": float(fvg_bull_top),
-            "fvg_bull_btm": float(fvg_bull_btm),
-            "fvg_bear_top": float(fvg_bear_top),
-            "fvg_bear_btm": float(fvg_bear_btm),
+            "fvg_bull_top": round(float(fvg_bull_top), 2),
+            "fvg_bull_btm": round(float(fvg_bull_btm), 2),
+            "fvg_bear_top": round(float(fvg_bear_top), 2),
+            "fvg_bear_btm": round(float(fvg_bear_btm), 2),
             "total_fvg_bull": self.total_fvg_bull,
             "total_fvg_bear": self.total_fvg_bear
         }
@@ -637,13 +665,7 @@ class Layer6Structure:
     
     def _detect_liquidity(self, df: pd.DataFrame, pivot_data: Dict,
                          avg_volume: pd.Series) -> Dict:
-        """
-        Detect liquidity sweeps (pivot highs/lows taken out with volume)
-        
-        Pine Script logic:
-        - Buy liquidity: close > pivot high with volume > avg * mult
-        - Sell liquidity: close < pivot low with volume > avg * mult
-        """
+        """Detect liquidity sweeps"""
         close = df['close'].values
         volume = df['volume'].values
         
@@ -653,13 +675,11 @@ class Layer6Structure:
         liq_buy_detected = False
         liq_sell_detected = False
         
-        # Check buy liquidity (sweep pivot high)
         if last_ph is not None:
             avg_vol_val = avg_volume.iloc[-1]
             if close[-1] > last_ph and volume[-1] > avg_vol_val * self.volume_mult:
                 liq_buy_detected = True
         
-        # Check sell liquidity (sweep pivot low)
         if last_pl is not None:
             avg_vol_val = avg_volume.iloc[-1]
             if close[-1] < last_pl and volume[-1] > avg_vol_val * self.volume_mult:
@@ -668,62 +688,27 @@ class Layer6Structure:
         return {
             "liq_buy_detected": liq_buy_detected,
             "liq_sell_detected": liq_sell_detected,
-            "liq_buy_level": float(last_ph) if last_ph is not None else 0.0,
-            "liq_sell_level": float(last_pl) if last_pl is not None else 0.0
+            "liq_buy_level": round(float(last_ph), 2) if last_ph is not None else None,
+            "liq_sell_level": round(float(last_pl), 2) if last_pl is not None else None
         }
     
-    # ==================== MARKET BIAS CALCULATION ====================
+    # ==================== RAW BIAS DATA ====================
     
-    def _calculate_market_bias(self, structure_data: Dict, ob_data: Dict) -> Dict:
-        """
-        Calculate overall market bias
-        
-        Pine Script logic:
-        - TRENDING: BOS > CHoCH * 2
-        - REVERSING: CHoCH > BOS * 2
-        - RANGING: Neither condition
-        """
+    def _calculate_raw_bias_data(self, structure_data: Dict) -> Dict:
+        """Calculate raw bias counts and ratios - NO interpretation"""
         total_choch = structure_data['total_choch_bull'] + structure_data['total_choch_bear']
         total_bos = structure_data['total_bos_bull'] + structure_data['total_bos_bear']
         
-        if total_bos > total_choch * 2:
-            market_state = "TRENDING"
-        elif total_choch > total_bos * 2:
-            market_state = "REVERSING"
-        else:
-            market_state = "RANGING"
-        
-        # Determine directional bias
         total_bull = structure_data['total_choch_bull'] + structure_data['total_bos_bull']
         total_bear = structure_data['total_choch_bear'] + structure_data['total_bos_bear']
         
-        if total_bull > total_bear * 1.5:
-            directional_bias = "BULLISH"
-        elif total_bear > total_bull * 1.5:
-            directional_bias = "BEARISH"
-        else:
-            directional_bias = "NEUTRAL"
-        
-        # Overall signal
-        if market_state == "TRENDING" and directional_bias == "BULLISH":
-            signal = "STRONG_BUY"
-        elif market_state == "TRENDING" and directional_bias == "BEARISH":
-            signal = "STRONG_SELL"
-        elif directional_bias == "BULLISH":
-            signal = "BUY"
-        elif directional_bias == "BEARISH":
-            signal = "SELL"
-        else:
-            signal = "NEUTRAL"
-        
         return {
-            "market_state": market_state,
-            "directional_bias": directional_bias,
-            "signal": signal,
             "total_choch": total_choch,
             "total_bos": total_bos,
-            "choch_bos_ratio": total_choch / total_bos if total_bos > 0 else 0,
-            "bull_bear_ratio": total_bull / total_bear if total_bear > 0 else 0
+            "total_bull": total_bull,
+            "total_bear": total_bear,
+            "choch_bos_ratio": round(total_choch / total_bos, 2) if total_bos > 0 else 0,
+            "bull_bear_ratio": round(total_bull / total_bear, 2) if total_bear > 0 else 0
         }
     
     # ==================== UTILITY FUNCTIONS ====================
@@ -752,34 +737,63 @@ class Layer6Structure:
     def _empty_result(self, reason: str) -> Dict:
         """Return empty result structure"""
         return {
-            "error": reason,
-            "choch_bos": {
-                "choch_bull_detected": False,
-                "choch_bear_detected": False,
-                "total_choch_bull": 0,
-                "total_choch_bear": 0,
-                "total_bos_bull": 0,
-                "total_bos_bear": 0
-            },
-            "order_blocks": {
-                "ob_bull_detected": False,
-                "ob_bear_detected": False,
-                "total_ob_bull": 0,
-                "total_ob_bear": 0
-            },
-            "fvg": {
-                "fvg_bull_detected": False,
-                "fvg_bear_detected": False,
-                "total_fvg_bull": 0,
-                "total_fvg_bear": 0
-            },
-            "liquidity": {
-                "liq_buy_detected": False,
-                "liq_sell_detected": False
-            },
-            "bias": {
-                "market_state": "RANGING",
-                "directional_bias": "NEUTRAL",
-                "signal": "NEUTRAL"
-            }
+            "last_pivot_high": None,
+            "last_pivot_low": None,
+            "last_pivot_high_index": None,
+            "last_pivot_low_index": None,
+            "pivot_high_count": 0,
+            "pivot_low_count": 0,
+            "choch_bull_detected": False,
+            "choch_bear_detected": False,
+            "choch_bull_quality": 0,
+            "choch_bear_quality": 0,
+            "choch_bull_delta": 0,
+            "choch_bear_delta": 0,
+            "bos_bull_detected": False,
+            "bos_bear_detected": False,
+            "bos_bull_quality": 0,
+            "bos_bear_quality": 0,
+            "bos_bull_delta": 0,
+            "bos_bear_delta": 0,
+            "total_choch_bull": 0,
+            "total_choch_bear": 0,
+            "total_bos_bull": 0,
+            "total_bos_bear": 0,
+            "current_trend": 0,
+            "ob_bull_detected": False,
+            "ob_bear_detected": False,
+            "ob_bull_quality": 0,
+            "ob_bear_quality": 0,
+            "ob_bull_top": 0,
+            "ob_bull_btm": 0,
+            "ob_bear_top": 0,
+            "ob_bear_btm": 0,
+            "total_ob_bull": 0,
+            "total_ob_bear": 0,
+            "fvg_bull_detected": False,
+            "fvg_bear_detected": False,
+            "fvg_bull_quality": 0,
+            "fvg_bear_quality": 0,
+            "fvg_bull_top": 0,
+            "fvg_bull_btm": 0,
+            "fvg_bear_top": 0,
+            "fvg_bear_btm": 0,
+            "total_fvg_bull": 0,
+            "total_fvg_bear": 0,
+            "liq_buy_detected": False,
+            "liq_sell_detected": False,
+            "liq_buy_level": None,
+            "liq_sell_level": None,
+            "total_bullish_patterns": 0,
+            "total_bearish_patterns": 0,
+            "total_choch": 0,
+            "total_bos": 0,
+            "choch_bos_ratio": 0,
+            "bull_bear_ratio": 0,
+            "trend_ema": None,
+            "price_vs_trend_ema": None,
+            "is_above_trend_ema": None,
+            "atr": None,
+            "current_price": None,
+            "error": reason
         }
