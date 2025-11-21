@@ -1,7 +1,7 @@
 """
-Layer 7: Liquidity Engine
+Layer 7: Liquidity Engine (Raw Data Output)
 Liquidity Sweeps, Stop Hunts, and Grab Detection
-Converted from 3 Pine Script files - Logic unchanged
+Outputs RAW liquidity data only - no scores, no signals
 """
 import pandas as pd
 import numpy as np
@@ -15,15 +15,11 @@ class Layer7Liquidity:
     Features:
     - Pivot-based liquidity sweep detection (LuxAlgo method)
     - ICT liquidity concepts (buy/sell side)
-    - Stop hunt detection with strength scoring (0-100%)
+    - Stop hunt detection with strength metrics
     - Multiple detection modes (wicks, outbreaks, both)
-    - State tracking (broken, mitigated, taken, swept)
     - Volume confirmation with spike detection
-    - Trend filters (EMA, ADX)
     - Round number detection
     - Equal highs/lows detection
-    - Success rate tracking
-    - Quality scoring for all patterns
     """
     
     def __init__(self):
@@ -75,7 +71,7 @@ class Layer7Liquidity:
             df: DataFrame with OHLCV data
             
         Returns:
-            Dict with liquidity sweeps, stop hunts, and statistics
+            Dict with RAW liquidity sweep, stop hunt, and statistics data
         """
         if len(df) < 50:
             return self._empty_result("Insufficient data")
@@ -94,44 +90,93 @@ class Layer7Liquidity:
         pivot_data = self._detect_pivots(df)
         
         # LuxAlgo liquidity sweeps
-        luxalgo_sweeps = self._detect_luxalgo_sweeps(
-            df, pivot_data, avg_volume
-        )
+        luxalgo_data = self._detect_luxalgo_sweeps(df, pivot_data, avg_volume)
         
         # ICT liquidity concepts
-        ict_liquidity = self._detect_ict_liquidity(
-            df, pivot_data, avg_volume, is_uptrend
-        )
+        ict_data = self._detect_ict_liquidity(df, pivot_data, avg_volume, is_uptrend)
         
         # Stop hunt detection
-        stop_hunts = self._detect_stop_hunts(
+        stop_hunt_data = self._detect_stop_hunts(
             df, pivot_data, avg_volume, trend_ema, is_uptrend, adx_data
         )
         
-        # Calculate statistics
-        stats = self._calculate_statistics(stop_hunts)
-        
+        # Return RAW DATA ONLY - no scores, no signals
         return {
-            "luxalgo_sweeps": luxalgo_sweeps,
-            "ict_liquidity": ict_liquidity,
-            "stop_hunts": stop_hunts,
-            "statistics": stats,
-            "trend_ema": float(trend_ema.iloc[-1]),
-            "is_uptrend": is_uptrend,
-            "adx": float(adx_data['adx'].iloc[-1]) if len(adx_data['adx']) > 0 else 0,
+            # Pivot Data
+            "last_pivot_high": pivot_data["last_ph"],
+            "last_pivot_low": pivot_data["last_pl"],
+            "last_pivot_high_index": pivot_data["last_ph_index"],
+            "last_pivot_low_index": pivot_data["last_pl_index"],
+            "pivot_high_count": len(pivot_data["pivot_highs"]),
+            "pivot_low_count": len(pivot_data["pivot_lows"]),
+            
+            # LuxAlgo Sweep Data
+            "bull_sweep_detected": luxalgo_data["bull_sweep_detected"],
+            "bear_sweep_detected": luxalgo_data["bear_sweep_detected"],
+            "bull_sweep_type": luxalgo_data["bull_sweep_type"],
+            "bear_sweep_type": luxalgo_data["bear_sweep_type"],
+            "bull_sweep_zone_top": luxalgo_data["bull_sweep_zone"]["top"],
+            "bull_sweep_zone_bottom": luxalgo_data["bull_sweep_zone"]["bottom"],
+            "bear_sweep_zone_top": luxalgo_data["bear_sweep_zone"]["top"],
+            "bear_sweep_zone_bottom": luxalgo_data["bear_sweep_zone"]["bottom"],
+            "total_bull_sweeps": luxalgo_data["total_bull_sweeps"],
+            "total_bear_sweeps": luxalgo_data["total_bear_sweeps"],
+            
+            # ICT Liquidity Data
+            "ict_buy_liq_detected": ict_data["buy_liq_detected"],
+            "ict_sell_liq_detected": ict_data["sell_liq_detected"],
+            "ict_buy_liq_level": ict_data["buy_liq_level"],
+            "ict_sell_liq_level": ict_data["sell_liq_level"],
+            
+            # Stop Hunt / Liquidity Grab Data
+            "bullish_grab_detected": stop_hunt_data["bullish_grab"],
+            "bearish_grab_detected": stop_hunt_data["bearish_grab"],
+            "bull_grab_level": stop_hunt_data["bull_level"],
+            "bear_grab_level": stop_hunt_data["bear_level"],
+            "bull_grab_strength": stop_hunt_data["bull_strength"],
+            "bear_grab_strength": stop_hunt_data["bear_strength"],
+            "bull_grab_retrace": stop_hunt_data["bull_retrace"],
+            "bear_grab_retrace": stop_hunt_data["bear_retrace"],
+            "bull_grab_type": stop_hunt_data["bull_type"],
+            "bear_grab_type": stop_hunt_data["bear_type"],
+            "bull_is_round_number": stop_hunt_data["bull_is_round"],
+            "bear_is_round_number": stop_hunt_data["bear_is_round"],
+            "bull_is_equal_level": stop_hunt_data["bull_is_equal"],
+            "bear_is_equal_level": stop_hunt_data["bear_is_equal"],
+            "total_bull_grabs": stop_hunt_data["total_bull_grabs"],
+            "total_bear_grabs": stop_hunt_data["total_bear_grabs"],
+            
+            # Statistics
+            "total_sweeps": self.total_bull_sweeps + self.total_bear_sweeps,
+            "total_grabs": self.total_bull_grabs + self.total_bear_grabs,
+            "successful_bull_grabs": self.successful_bull_grabs,
+            "successful_bear_grabs": self.successful_bear_grabs,
+            
+            # Trend Context
+            "trend_ema": round(float(trend_ema.iloc[-1]), 2),
+            "price_vs_trend_ema": round(float(df['close'].iloc[-1] - trend_ema.iloc[-1]), 2),
+            "is_above_trend_ema": is_uptrend,
+            "adx": round(float(adx_data['adx'].iloc[-1]), 2) if len(adx_data['adx']) > 0 else None,
+            "plus_di": round(float(adx_data['plus_di'].iloc[-1]), 2) if len(adx_data['plus_di']) > 0 else None,
+            "minus_di": round(float(adx_data['minus_di'].iloc[-1]), 2) if len(adx_data['minus_di']) > 0 else None,
+            
+            # Volume Context
+            "current_volume": round(float(df['volume'].iloc[-1]), 0),
+            "avg_volume": round(float(avg_volume.iloc[-1]), 0),
+            "volume_ratio": round(float(df['volume'].iloc[-1] / avg_volume.iloc[-1]), 2) if avg_volume.iloc[-1] > 0 else 1.0,
+            "volume_spike": df['volume'].iloc[-1] > avg_volume.iloc[-1] * self.volume_mult,
+            
+            # Price Context
+            "current_price": round(df["close"].iloc[-1], 2),
+            
+            # Timestamp
             "timestamp": df.index[-1] if isinstance(df.index, pd.DatetimeIndex) else datetime.now()
         }
     
     # ==================== PIVOT DETECTION ====================
     
     def _detect_pivots(self, df: pd.DataFrame) -> Dict:
-        """
-        Detect pivot highs and lows
-        
-        Pine Script logic:
-        - ph = ta.pivothigh(len, len)
-        - pl = ta.pivotlow(len, len)
-        """
+        """Detect pivot highs and lows"""
         high = df['high'].values
         low = df['low'].values
         
@@ -183,20 +228,10 @@ class Layer7Liquidity:
     
     def _detect_luxalgo_sweeps(self, df: pd.DataFrame, pivot_data: Dict,
                                 avg_volume: pd.Series) -> Dict:
-        """
-        Detect liquidity sweeps using LuxAlgo methodology
-        
-        Pine Script logic:
-        - 3 modes: Only Wicks, Only Outbreaks & Retest, Both
-        - States: broken, mitigated, taken, wick
-        - Wick detection: high > pivot but close < pivot
-        - Outbreak detection: close > pivot (broken), then close < pivot (taken)
-        """
+        """Detect liquidity sweeps using LuxAlgo methodology"""
         high = df['high'].values
         low = df['low'].values
         close = df['close'].values
-        
-        current_index = len(df) - 1
         
         bull_sweep_detected = False
         bear_sweep_detected = False
@@ -210,53 +245,47 @@ class Layer7Liquidity:
         
         # Bearish sweep detection (sweep above pivot high)
         if last_ph is not None:
-            # Wick detection (wicks or both mode)
             if self.detection_mode in ['wicks', 'both']:
                 if high[-1] > last_ph and close[-1] < last_ph:
                     bear_sweep_detected = True
                     bear_sweep_type = "WICK"
                     bear_sweep_zone = {
-                        "top": high[-1],
-                        "bottom": last_ph
+                        "top": float(high[-1]),
+                        "bottom": float(last_ph)
                     }
                     self.total_bear_sweeps += 1
             
-            # Outbreak detection (outbreaks or both mode)
             if self.detection_mode in ['outbreaks', 'both']:
-                # Check if previously broken and now retesting
                 if close[-2] > last_ph and close[-1] < last_ph:
                     if high[-1] > last_ph:
                         bear_sweep_detected = True
                         bear_sweep_type = "OUTBREAK_RETEST"
                         bear_sweep_zone = {
-                            "top": high[-1],
-                            "bottom": last_ph
+                            "top": float(high[-1]),
+                            "bottom": float(last_ph)
                         }
                         self.total_bear_sweeps += 1
         
         # Bullish sweep detection (sweep below pivot low)
         if last_pl is not None:
-            # Wick detection (wicks or both mode)
             if self.detection_mode in ['wicks', 'both']:
                 if low[-1] < last_pl and close[-1] > last_pl:
                     bull_sweep_detected = True
                     bull_sweep_type = "WICK"
                     bull_sweep_zone = {
-                        "top": last_pl,
-                        "bottom": low[-1]
+                        "top": float(last_pl),
+                        "bottom": float(low[-1])
                     }
                     self.total_bull_sweeps += 1
             
-            # Outbreak detection (outbreaks or both mode)
             if self.detection_mode in ['outbreaks', 'both']:
-                # Check if previously broken and now retesting
                 if close[-2] < last_pl and close[-1] > last_pl:
                     if low[-1] < last_pl:
                         bull_sweep_detected = True
                         bull_sweep_type = "OUTBREAK_RETEST"
                         bull_sweep_zone = {
-                            "top": last_pl,
-                            "bottom": low[-1]
+                            "top": float(last_pl),
+                            "bottom": float(low[-1])
                         }
                         self.total_bull_sweeps += 1
         
@@ -275,20 +304,12 @@ class Layer7Liquidity:
     
     def _detect_ict_liquidity(self, df: pd.DataFrame, pivot_data: Dict,
                               avg_volume: pd.Series, is_uptrend: bool) -> Dict:
-        """
-        Detect ICT-style liquidity sweeps
-        
-        Pine Script logic:
-        - Buy liquidity: close > pivot_high AND volume > avg * mult
-        - Sell liquidity: close < pivot_low AND volume > avg * mult
-        """
+        """Detect ICT-style liquidity sweeps"""
         close = df['close'].values
         volume = df['volume'].values
         
         last_ph = pivot_data['last_ph']
         last_pl = pivot_data['last_pl']
-        last_ph_index = pivot_data['last_ph_index']
-        last_pl_index = pivot_data['last_pl_index']
         
         buy_liq_detected = False
         sell_liq_detected = False
@@ -297,13 +318,11 @@ class Layer7Liquidity:
         
         avg_vol_val = avg_volume.iloc[-1]
         
-        # Buy-side liquidity sweep (sweep above pivot high)
         if last_ph is not None:
             if close[-1] > last_ph and volume[-1] > avg_vol_val * self.volume_mult:
                 buy_liq_detected = True
                 buy_liq_level = last_ph
         
-        # Sell-side liquidity sweep (sweep below pivot low)
         if last_pl is not None:
             if close[-1] < last_pl and volume[-1] > avg_vol_val * self.volume_mult:
                 sell_liq_detected = True
@@ -312,8 +331,8 @@ class Layer7Liquidity:
         return {
             "buy_liq_detected": buy_liq_detected,
             "sell_liq_detected": sell_liq_detected,
-            "buy_liq_level": float(buy_liq_level),
-            "sell_liq_level": float(sell_liq_level)
+            "buy_liq_level": round(float(buy_liq_level), 2),
+            "sell_liq_level": round(float(sell_liq_level), 2)
         }
     
     # ==================== STOP HUNT DETECTION ====================
@@ -321,33 +340,20 @@ class Layer7Liquidity:
     def _detect_stop_hunts(self, df: pd.DataFrame, pivot_data: Dict,
                           avg_volume: pd.Series, trend_ema: pd.Series,
                           is_uptrend: bool, adx_data: Dict) -> Dict:
-        """
-        Detect liquidity grabs (stop hunts) with strength scoring
-        
-        Pine Script logic:
-        - Lookback for previous high/low
-        - Detect wick above/below with retrace confirmation
-        - Multiple filters: volume, EMA trend, ADX
-        - Round number detection
-        - Equal highs/lows detection
-        - Strength calculation: 0-100%
-        """
+        """Detect liquidity grabs (stop hunts) with strength calculation"""
         high = df['high'].values
         low = df['low'].values
         close = df['close'].values
         volume = df['volume'].values
         
-        # Get previous high/low
         prev_high = np.max(high[-self.lookback_bars-1:-1])
         prev_low = np.min(low[-self.lookback_bars-1:-1])
         
-        # Current values
         current_high = high[-1]
         current_low = low[-1]
         current_close = close[-1]
         current_volume = volume[-1]
         
-        # Filters
         avg_vol_val = avg_volume.iloc[-1]
         volume_spike = current_volume > avg_vol_val * self.volume_mult
         volume_condition = volume_spike if self.use_volume else True
@@ -386,21 +392,13 @@ class Layer7Liquidity:
                     bear_retrace = 0.5
             
             if bearish_grab:
-                # Round number detection
                 bear_is_round = self._is_round_number(bear_level)
-                
-                # Equal level detection
-                bear_is_equal, equal_count = self._detect_equal_level(
-                    df, bear_level, True, current_index=len(df)-1
-                )
-                
-                # Calculate strength
+                bear_is_equal, _ = self._detect_equal_level(df, bear_level, True, len(df)-1)
                 bear_strength = self._calculate_strength(
                     bear_retrace, volume_condition, bear_is_round,
                     bear_is_equal, trend_condition_bear
                 )
                 
-                # Determine type
                 if bear_is_equal:
                     bear_type = "EQUAL_HIGH"
                 elif bear_is_round:
@@ -436,21 +434,13 @@ class Layer7Liquidity:
                     bull_retrace = 0.5
             
             if bullish_grab:
-                # Round number detection
                 bull_is_round = self._is_round_number(bull_level)
-                
-                # Equal level detection
-                bull_is_equal, equal_count = self._detect_equal_level(
-                    df, bull_level, False, current_index=len(df)-1
-                )
-                
-                # Calculate strength
+                bull_is_equal, _ = self._detect_equal_level(df, bull_level, False, len(df)-1)
                 bull_strength = self._calculate_strength(
                     bull_retrace, volume_condition, bull_is_round,
                     bull_is_equal, trend_condition_bull
                 )
                 
-                # Determine type
                 if bull_is_equal:
                     bull_type = "EQUAL_LOW"
                 elif bull_is_round:
@@ -463,12 +453,12 @@ class Layer7Liquidity:
         return {
             "bullish_grab": bullish_grab,
             "bearish_grab": bearish_grab,
-            "bull_level": float(bull_level),
-            "bear_level": float(bear_level),
-            "bull_strength": bull_strength,
-            "bear_strength": bear_strength,
-            "bull_retrace": bull_retrace,
-            "bear_retrace": bear_retrace,
+            "bull_level": round(float(bull_level), 2),
+            "bear_level": round(float(bear_level), 2),
+            "bull_strength": round(bull_strength, 2),
+            "bear_strength": round(bear_strength, 2),
+            "bull_retrace": round(bull_retrace, 4),
+            "bear_retrace": round(bear_retrace, 4),
             "bull_type": bull_type,
             "bear_type": bear_type,
             "bull_is_round": bull_is_round,
@@ -482,14 +472,7 @@ class Layer7Liquidity:
     # ==================== HELPER FUNCTIONS ====================
     
     def _is_round_number(self, price: float) -> bool:
-        """
-        Check if price is near a round number
-        
-        Pine Script logic:
-        - remainder = price % roundIncrement
-        - tolerance = roundIncrement * 0.1
-        - is_round = remainder < tolerance OR remainder > (increment - tolerance)
-        """
+        """Check if price is near a round number"""
         if not self.use_round_numbers:
             return False
         
@@ -500,14 +483,7 @@ class Layer7Liquidity:
     
     def _detect_equal_level(self, df: pd.DataFrame, current_level: float,
                            is_high: bool, current_index: int) -> Tuple[bool, int]:
-        """
-        Detect if current level matches previous highs/lows (equal levels)
-        
-        Pine Script logic:
-        - Look back 50 bars
-        - Count matches within tolerance
-        - Equal if count >= 2
-        """
+        """Detect if current level matches previous highs/lows (equal levels)"""
         if not self.detect_equal_levels:
             return False, 0
         
@@ -536,17 +512,7 @@ class Layer7Liquidity:
     def _calculate_strength(self, retrace_pct: float, vol_confirmed: bool,
                            is_round: bool, is_equal: bool,
                            trend_aligned: bool) -> float:
-        """
-        Calculate grab strength (0-100%)
-        
-        Pine Script formula:
-        - Base strength: retrace_pct * 30
-        - Volume confirmed: +25
-        - Round number: +15
-        - Equal level: +20
-        - Trend aligned: +10
-        - Max: 100
-        """
+        """Calculate grab strength (0-100%) - deterministic formula"""
         strength = 0.0
         
         strength += retrace_pct * 30
@@ -558,23 +524,17 @@ class Layer7Liquidity:
         return min(strength, 100)
     
     def _calculate_adx(self, df: pd.DataFrame, period: int) -> Dict:
-        """
-        Calculate ADX (Average Directional Index)
-        
-        Pine Script: ta.dmi(length, length)
-        """
+        """Calculate ADX (Average Directional Index)"""
         high = df['high'].values
         low = df['low'].values
         close = df['close'].values
         
-        # Calculate True Range
         tr1 = high - low
         tr2 = np.abs(high - np.roll(close, 1))
         tr3 = np.abs(low - np.roll(close, 1))
         tr = np.maximum(tr1, np.maximum(tr2, tr3))
         tr[0] = tr1[0]
         
-        # Calculate +DM and -DM
         up_move = high - np.roll(high, 1)
         down_move = np.roll(low, 1) - low
         
@@ -583,7 +543,6 @@ class Layer7Liquidity:
         plus_dm[0] = 0
         minus_dm[0] = 0
         
-        # Smooth with RMA (Wilder's smoothing)
         atr = np.zeros(len(df))
         smooth_plus_dm = np.zeros(len(df))
         smooth_minus_dm = np.zeros(len(df))
@@ -597,15 +556,12 @@ class Layer7Liquidity:
             smooth_plus_dm[i] = (smooth_plus_dm[i-1] * (period - 1) + plus_dm[i]) / period
             smooth_minus_dm[i] = (smooth_minus_dm[i-1] * (period - 1) + minus_dm[i]) / period
         
-        # Calculate +DI and -DI
         plus_di = 100 * smooth_plus_dm / atr
         minus_di = 100 * smooth_minus_dm / atr
         
-        # Calculate DX
         dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
         dx = np.nan_to_num(dx)
         
-        # Calculate ADX (smoothed DX)
         adx = np.zeros(len(df))
         adx[period*2-2] = np.mean(dx[period-1:period*2-1])
         
@@ -618,57 +574,59 @@ class Layer7Liquidity:
             'adx': pd.Series(adx, index=df.index)
         }
     
-    def _calculate_statistics(self, stop_hunts: Dict) -> Dict:
-        """Calculate success rates and statistics"""
-        total_grabs = self.total_bull_grabs + self.total_bear_grabs
-        
-        bull_success_rate = 0.0
-        bear_success_rate = 0.0
-        
-        if self.total_bull_grabs > 0:
-            bull_success_rate = (self.successful_bull_grabs / self.total_bull_grabs) * 100
-        
-        if self.total_bear_grabs > 0:
-            bear_success_rate = (self.successful_bear_grabs / self.total_bear_grabs) * 100
-        
-        overall_success_rate = 0.0
-        if total_grabs > 0:
-            total_successful = self.successful_bull_grabs + self.successful_bear_grabs
-            overall_success_rate = (total_successful / total_grabs) * 100
-        
-        return {
-            "total_bull_grabs": self.total_bull_grabs,
-            "total_bear_grabs": self.total_bear_grabs,
-            "total_grabs": total_grabs,
-            "successful_bull_grabs": self.successful_bull_grabs,
-            "successful_bear_grabs": self.successful_bear_grabs,
-            "bull_success_rate": bull_success_rate,
-            "bear_success_rate": bear_success_rate,
-            "overall_success_rate": overall_success_rate
-        }
-    
     def _empty_result(self, reason: str) -> Dict:
         """Return empty result structure"""
         return {
-            "error": reason,
-            "luxalgo_sweeps": {
-                "bull_sweep_detected": False,
-                "bear_sweep_detected": False,
-                "total_bull_sweeps": 0,
-                "total_bear_sweeps": 0
-            },
-            "ict_liquidity": {
-                "buy_liq_detected": False,
-                "sell_liq_detected": False
-            },
-            "stop_hunts": {
-                "bullish_grab": False,
-                "bearish_grab": False,
-                "total_bull_grabs": 0,
-                "total_bear_grabs": 0
-            },
-            "statistics": {
-                "total_grabs": 0,
-                "overall_success_rate": 0
-            }
+            "last_pivot_high": None,
+            "last_pivot_low": None,
+            "last_pivot_high_index": None,
+            "last_pivot_low_index": None,
+            "pivot_high_count": 0,
+            "pivot_low_count": 0,
+            "bull_sweep_detected": False,
+            "bear_sweep_detected": False,
+            "bull_sweep_type": "",
+            "bear_sweep_type": "",
+            "bull_sweep_zone_top": 0,
+            "bull_sweep_zone_bottom": 0,
+            "bear_sweep_zone_top": 0,
+            "bear_sweep_zone_bottom": 0,
+            "total_bull_sweeps": 0,
+            "total_bear_sweeps": 0,
+            "ict_buy_liq_detected": False,
+            "ict_sell_liq_detected": False,
+            "ict_buy_liq_level": 0,
+            "ict_sell_liq_level": 0,
+            "bullish_grab_detected": False,
+            "bearish_grab_detected": False,
+            "bull_grab_level": 0,
+            "bear_grab_level": 0,
+            "bull_grab_strength": 0,
+            "bear_grab_strength": 0,
+            "bull_grab_retrace": 0,
+            "bear_grab_retrace": 0,
+            "bull_grab_type": "",
+            "bear_grab_type": "",
+            "bull_is_round_number": False,
+            "bear_is_round_number": False,
+            "bull_is_equal_level": False,
+            "bear_is_equal_level": False,
+            "total_bull_grabs": 0,
+            "total_bear_grabs": 0,
+            "total_sweeps": 0,
+            "total_grabs": 0,
+            "successful_bull_grabs": 0,
+            "successful_bear_grabs": 0,
+            "trend_ema": None,
+            "price_vs_trend_ema": None,
+            "is_above_trend_ema": None,
+            "adx": None,
+            "plus_di": None,
+            "minus_di": None,
+            "current_volume": None,
+            "avg_volume": None,
+            "volume_ratio": None,
+            "volume_spike": None,
+            "current_price": None,
+            "error": reason
         }
