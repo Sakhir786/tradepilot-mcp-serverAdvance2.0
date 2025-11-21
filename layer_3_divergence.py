@@ -1,7 +1,7 @@
 """
-Layer 3: Divergence Engine
+Layer 3: Divergence Engine (Raw Data Output)
 MACD and RSI divergence detection (Regular + Hidden)
-Converted from Pine Script - Logic unchanged
+Outputs RAW divergence data only - no scores, no signals
 """
 import pandas as pd
 import numpy as np
@@ -42,7 +42,7 @@ class Layer3Divergence:
             df: DataFrame with OHLCV data
             
         Returns:
-            Dict with MACD and RSI divergence signals
+            Dict with RAW MACD and RSI divergence data
         """
         if len(df) < 100:
             return self._empty_result("Insufficient data")
@@ -55,13 +55,30 @@ class Layer3Divergence:
         # Run RSI divergence detection
         rsi_results = self._analyze_rsi_divergences(df)
         
-        # Aggregate signals
-        summary = self._create_summary(macd_results, rsi_results)
+        # Aggregate raw counts (no interpretation)
+        summary = self._create_raw_summary(macd_results, rsi_results)
         
+        # Return RAW DATA ONLY - no scores, no signals
         return {
+            # MACD Divergence Data
             "macd_divergences": macd_results,
+            
+            # RSI Divergence Data
             "rsi_divergences": rsi_results,
-            "summary": summary,
+            
+            # Raw Counts Summary
+            "divergence_counts": summary,
+            
+            # Latest Indicator Values (for context)
+            "latest_rsi": rsi_results.get('latest_rsi'),
+            "latest_macd_1h": macd_results.get('tf1', {}).get('latest_macd'),
+            "latest_macd_4h": macd_results.get('tf2', {}).get('latest_macd'),
+            "latest_macd_1d": macd_results.get('tf3', {}).get('latest_macd'),
+            
+            # Current Price Context
+            "current_price": round(df["close"].iloc[-1], 2),
+            
+            # Timestamp
             "timestamp": df.index[-1] if isinstance(df.index, pd.DatetimeIndex) else datetime.now()
         }
     
@@ -421,39 +438,56 @@ class Layer3Divergence:
         
         return rsi
     
-    def _create_summary(self, macd_results: Dict, rsi_results: Dict) -> Dict:
-        """Create summary of all divergences"""
-        total_bearish = 0
-        total_bullish = 0
+    def _create_raw_summary(self, macd_results: Dict, rsi_results: Dict) -> Dict:
+        """Create RAW summary of divergence counts - NO interpretation"""
         
-        # Count MACD divergences
+        # Count MACD divergences by type
+        macd_regular_bearish = 0
+        macd_hidden_bearish = 0
+        macd_regular_bullish = 0
+        macd_hidden_bullish = 0
+        
         for tf_result in macd_results.values():
             divs = tf_result['divergences']
-            total_bearish += len(divs['regular_bearish']) + len(divs['hidden_bearish'])
-            total_bullish += len(divs['regular_bullish']) + len(divs['hidden_bullish'])
+            macd_regular_bearish += len(divs['regular_bearish'])
+            macd_hidden_bearish += len(divs['hidden_bearish'])
+            macd_regular_bullish += len(divs['regular_bullish'])
+            macd_hidden_bullish += len(divs['hidden_bullish'])
         
         # Count RSI divergences
         rsi_divs = rsi_results['divergences']
-        total_bearish += len(rsi_divs['regular_bearish']) + len(rsi_divs['hidden_bearish'])
-        total_bullish += len(rsi_divs['regular_bullish']) + len(rsi_divs['hidden_bullish'])
+        rsi_regular_bearish = len(rsi_divs['regular_bearish'])
+        rsi_hidden_bearish = len(rsi_divs['hidden_bearish'])
+        rsi_regular_bullish = len(rsi_divs['regular_bullish'])
+        rsi_hidden_bullish = len(rsi_divs['hidden_bullish'])
         
-        # Determine overall signal
-        if total_bearish > total_bullish * 1.5:
-            signal = "STRONG_SELL"
-        elif total_bearish > total_bullish:
-            signal = "SELL"
-        elif total_bullish > total_bearish * 1.5:
-            signal = "STRONG_BUY"
-        elif total_bullish > total_bearish:
-            signal = "BUY"
-        else:
-            signal = "NEUTRAL"
-        
+        # Return RAW COUNTS ONLY - no signal, no confidence
         return {
-            "total_bearish_divergences": total_bearish,
-            "total_bullish_divergences": total_bullish,
-            "signal": signal,
-            "confidence": min(100, max(total_bearish, total_bullish) * 10)
+            # MACD Counts
+            "macd_regular_bearish_count": macd_regular_bearish,
+            "macd_hidden_bearish_count": macd_hidden_bearish,
+            "macd_regular_bullish_count": macd_regular_bullish,
+            "macd_hidden_bullish_count": macd_hidden_bullish,
+            "macd_total_bearish": macd_regular_bearish + macd_hidden_bearish,
+            "macd_total_bullish": macd_regular_bullish + macd_hidden_bullish,
+            
+            # RSI Counts
+            "rsi_regular_bearish_count": rsi_regular_bearish,
+            "rsi_hidden_bearish_count": rsi_hidden_bearish,
+            "rsi_regular_bullish_count": rsi_regular_bullish,
+            "rsi_hidden_bullish_count": rsi_hidden_bullish,
+            "rsi_total_bearish": rsi_regular_bearish + rsi_hidden_bearish,
+            "rsi_total_bullish": rsi_regular_bullish + rsi_hidden_bullish,
+            
+            # Combined Totals
+            "total_bearish_divergences": (macd_regular_bearish + macd_hidden_bearish + 
+                                          rsi_regular_bearish + rsi_hidden_bearish),
+            "total_bullish_divergences": (macd_regular_bullish + macd_hidden_bullish + 
+                                          rsi_regular_bullish + rsi_hidden_bullish),
+            "total_regular_divergences": (macd_regular_bearish + macd_regular_bullish + 
+                                          rsi_regular_bearish + rsi_regular_bullish),
+            "total_hidden_divergences": (macd_hidden_bearish + macd_hidden_bullish + 
+                                         rsi_hidden_bearish + rsi_hidden_bullish)
         }
     
     def _empty_result(self, reason: str) -> Dict:
@@ -461,11 +495,28 @@ class Layer3Divergence:
         return {
             "macd_divergences": {},
             "rsi_divergences": {"divergences": {}},
-            "summary": {
+            "divergence_counts": {
+                "macd_regular_bearish_count": 0,
+                "macd_hidden_bearish_count": 0,
+                "macd_regular_bullish_count": 0,
+                "macd_hidden_bullish_count": 0,
+                "macd_total_bearish": 0,
+                "macd_total_bullish": 0,
+                "rsi_regular_bearish_count": 0,
+                "rsi_hidden_bearish_count": 0,
+                "rsi_regular_bullish_count": 0,
+                "rsi_hidden_bullish_count": 0,
+                "rsi_total_bearish": 0,
+                "rsi_total_bullish": 0,
                 "total_bearish_divergences": 0,
                 "total_bullish_divergences": 0,
-                "signal": "NEUTRAL",
-                "confidence": 0
+                "total_regular_divergences": 0,
+                "total_hidden_divergences": 0
             },
+            "latest_rsi": None,
+            "latest_macd_1h": None,
+            "latest_macd_4h": None,
+            "latest_macd_1d": None,
+            "current_price": None,
             "error": reason
         }
