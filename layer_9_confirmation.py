@@ -1,7 +1,7 @@
 """
-Layer 9: Multi-Timeframe Confirmation Engine
+Layer 9: Multi-Timeframe Confirmation Engine (Raw Data Output)
 MTF SuperTrend Alignment with Weighted Scoring
-Converted from Pine Script - Logic unchanged
+Outputs RAW MTF data only - no scores, no signals
 """
 import pandas as pd
 import numpy as np
@@ -14,13 +14,9 @@ class Layer9Confirmation:
     
     Features:
     - Multi-timeframe SuperTrend alignment (5 timeframes)
-    - Weighted scoring system (configurable)
     - SuperTrend direction per timeframe
     - ADX calculation per timeframe
-    - Alignment score (0-100%)
-    - Confidence adjustments (+20 to -20)
     - Bull/bear counting
-    - ADX filtering (optional)
     """
     
     def __init__(self):
@@ -58,7 +54,6 @@ class Layer9Confirmation:
         # ADX Settings
         self.adx_length = 14
         self.adx_threshold = 20
-        self.use_adx_filter = False
         
         # Current timeframe (will be set during analysis)
         self.current_tf = None
@@ -73,7 +68,7 @@ class Layer9Confirmation:
             current_timeframe: Current timeframe ('5', '15', '60', '240', 'D')
             
         Returns:
-            Dict with MTF alignment data
+            Dict with RAW MTF alignment data
         """
         if len(df) < 50:
             return self._empty_result("Insufficient data")
@@ -89,90 +84,118 @@ class Layer9Confirmation:
         # Get multi-timeframe data
         mtf_data = self._get_mtf_data(df)
         
-        # Calculate alignment score
-        alignment_result = self._calculate_alignment(mtf_data)
+        # Calculate raw alignment metrics
+        alignment_metrics = self._calculate_raw_alignment(mtf_data)
         
-        # Calculate confidence adjustment
-        conf_adj = self._calculate_confidence_adjustment(alignment_result['alignment_score'])
-        
+        # Return RAW DATA ONLY - no scores, no signals
         return {
+            # Current Timeframe Data
             "current_timeframe": current_timeframe,
             "current_st_direction": int(self.current_st_dir),
-            "current_adx": float(current_adx.iloc[-1]),
-            "mtf_data": mtf_data,
-            "alignment_score": alignment_result['alignment_score'],
-            "bull_count": alignment_result['bull_count'],
-            "bear_count": alignment_result['bear_count'],
-            "confidence_adjustment": conf_adj,
-            "signal": self._generate_signal(alignment_result['alignment_score']),
+            "current_st_bullish": self.current_st_dir == 1,
+            "current_st_bearish": self.current_st_dir == -1,
+            "current_adx": round(float(current_adx.iloc[-1]), 2),
+            "current_st_line": round(float(current_st_line.iloc[-1]), 2),
+            
+            # Per-Timeframe Data
+            "tf_5min_direction": mtf_data.get('5', {}).get('direction'),
+            "tf_5min_bullish": mtf_data.get('5', {}).get('direction') == 1,
+            "tf_5min_adx": mtf_data.get('5', {}).get('adx'),
+            "tf_5min_weight": self.weights['5'],
+            
+            "tf_15min_direction": mtf_data.get('15', {}).get('direction'),
+            "tf_15min_bullish": mtf_data.get('15', {}).get('direction') == 1,
+            "tf_15min_adx": mtf_data.get('15', {}).get('adx'),
+            "tf_15min_weight": self.weights['15'],
+            
+            "tf_1h_direction": mtf_data.get('60', {}).get('direction'),
+            "tf_1h_bullish": mtf_data.get('60', {}).get('direction') == 1,
+            "tf_1h_adx": mtf_data.get('60', {}).get('adx'),
+            "tf_1h_weight": self.weights['60'],
+            
+            "tf_4h_direction": mtf_data.get('240', {}).get('direction'),
+            "tf_4h_bullish": mtf_data.get('240', {}).get('direction') == 1,
+            "tf_4h_adx": mtf_data.get('240', {}).get('adx'),
+            "tf_4h_weight": self.weights['240'],
+            
+            "tf_1d_direction": mtf_data.get('D', {}).get('direction'),
+            "tf_1d_bullish": mtf_data.get('D', {}).get('direction') == 1,
+            "tf_1d_adx": mtf_data.get('D', {}).get('adx'),
+            "tf_1d_weight": self.weights['D'],
+            
+            # Alignment Metrics (raw counts)
+            "bull_count": alignment_metrics['bull_count'],
+            "bear_count": alignment_metrics['bear_count'],
+            "total_timeframes": alignment_metrics['total_timeframes'],
+            "aligned_with_current_count": alignment_metrics['aligned_count'],
+            "not_aligned_count": alignment_metrics['not_aligned_count'],
+            
+            # Weighted Alignment (raw calculation, no interpretation)
+            "weighted_aligned": alignment_metrics['weighted_aligned'],
+            "weighted_not_aligned": alignment_metrics['weighted_not_aligned'],
+            "total_weight": alignment_metrics['total_weight'],
+            "alignment_pct": alignment_metrics['alignment_pct'],
+            
+            # Higher Timeframe Context
+            "htf_bullish_count": alignment_metrics['htf_bullish_count'],
+            "htf_bearish_count": alignment_metrics['htf_bearish_count'],
+            "htf_aligned": alignment_metrics['htf_aligned'],
+            
+            # Price Context
+            "current_price": round(df["close"].iloc[-1], 2),
+            
+            # Timestamp
             "timestamp": df.index[-1] if isinstance(df.index, pd.DatetimeIndex) else datetime.now()
         }
     
     # ==================== SUPERTREND CALCULATION ====================
     
     def _calculate_supertrend(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
-        """
-        Calculate SuperTrend indicator
-        
-        Pine Script: ta.supertrend(factor, period)
-        Returns: [line, direction]
-        Direction: < 0 = bullish, >= 0 = bearish
-        
-        Python representation:
-        direction: 1 = bullish, -1 = bearish
-        """
+        """Calculate SuperTrend indicator"""
         high = df['high'].values
         low = df['low'].values
         close = df['close'].values
         
-        # Calculate ATR
         atr = self._calculate_atr(df, self.st_period)
         
-        # Calculate basic bands
         hl2 = (high + low) / 2
         
         upperband = hl2 + (self.st_factor * atr)
         lowerband = hl2 - (self.st_factor * atr)
         
-        # Initialize arrays
         final_upperband = np.zeros(len(df))
         final_lowerband = np.zeros(len(df))
         supertrend = np.zeros(len(df))
         direction = np.zeros(len(df))
         
-        # First values
         final_upperband[0] = upperband[0]
         final_lowerband[0] = lowerband[0]
         supertrend[0] = final_upperband[0]
-        direction[0] = -1  # Start bearish
+        direction[0] = -1
         
-        # Calculate SuperTrend
         for i in range(1, len(df)):
-            # Upper band
             if upperband[i] < final_upperband[i-1] or close[i-1] > final_upperband[i-1]:
                 final_upperband[i] = upperband[i]
             else:
                 final_upperband[i] = final_upperband[i-1]
             
-            # Lower band
             if lowerband[i] > final_lowerband[i-1] or close[i-1] < final_lowerband[i-1]:
                 final_lowerband[i] = lowerband[i]
             else:
                 final_lowerband[i] = final_lowerband[i-1]
             
-            # SuperTrend line and direction
             if supertrend[i-1] == final_upperband[i-1] and close[i] <= final_upperband[i]:
                 supertrend[i] = final_upperband[i]
-                direction[i] = -1  # Bearish
+                direction[i] = -1
             elif supertrend[i-1] == final_upperband[i-1] and close[i] > final_upperband[i]:
                 supertrend[i] = final_lowerband[i]
-                direction[i] = 1  # Bullish
+                direction[i] = 1
             elif supertrend[i-1] == final_lowerband[i-1] and close[i] >= final_lowerband[i]:
                 supertrend[i] = final_lowerband[i]
-                direction[i] = 1  # Bullish
+                direction[i] = 1
             elif supertrend[i-1] == final_lowerband[i-1] and close[i] < final_lowerband[i]:
                 supertrend[i] = final_upperband[i]
-                direction[i] = -1  # Bearish
+                direction[i] = -1
             else:
                 supertrend[i] = supertrend[i-1]
                 direction[i] = direction[i-1]
@@ -206,26 +229,19 @@ class Layer9Confirmation:
     # ==================== ADX CALCULATION ====================
     
     def _calculate_adx(self, df: pd.DataFrame) -> pd.Series:
-        """
-        Calculate ADX (Average Directional Index)
-        
-        Pine Script: ta.dmi(length, length)
-        Returns: [+DI, -DI, ADX]
-        """
+        """Calculate ADX (Average Directional Index)"""
         high = df['high'].values
         low = df['low'].values
         close = df['close'].values
         
         period = self.adx_length
         
-        # Calculate True Range
         tr1 = high - low
         tr2 = np.abs(high - np.roll(close, 1))
         tr3 = np.abs(low - np.roll(close, 1))
         tr = np.maximum(tr1, np.maximum(tr2, tr3))
         tr[0] = tr1[0]
         
-        # Calculate +DM and -DM
         up_move = high - np.roll(high, 1)
         down_move = np.roll(low, 1) - low
         
@@ -234,7 +250,6 @@ class Layer9Confirmation:
         plus_dm[0] = 0
         minus_dm[0] = 0
         
-        # Smooth with RMA (Wilder's smoothing)
         atr = np.zeros(len(df))
         smooth_plus_dm = np.zeros(len(df))
         smooth_minus_dm = np.zeros(len(df))
@@ -248,15 +263,12 @@ class Layer9Confirmation:
             smooth_plus_dm[i] = (smooth_plus_dm[i-1] * (period - 1) + plus_dm[i]) / period
             smooth_minus_dm[i] = (smooth_minus_dm[i-1] * (period - 1) + minus_dm[i]) / period
         
-        # Calculate +DI and -DI
         plus_di = 100 * smooth_plus_dm / atr
         minus_di = 100 * smooth_minus_dm / atr
         
-        # Calculate DX
         dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
         dx = np.nan_to_num(dx)
         
-        # Calculate ADX (smoothed DX)
         adx = np.zeros(len(df))
         adx[period*2-2] = np.mean(dx[period-1:period*2-1])
         
@@ -268,20 +280,13 @@ class Layer9Confirmation:
     # ==================== MULTI-TIMEFRAME DATA ====================
     
     def _get_mtf_data(self, df: pd.DataFrame) -> Dict:
-        """
-        Get SuperTrend direction and ADX for all timeframes
-        
-        Pine Script equivalent:
-        st_dir_5m = request.security(syminfo.tickerid, tf_5m, f_supertrend_direction())
-        adx_5m = request.security(syminfo.tickerid, tf_5m, f_adx())
-        """
+        """Get SuperTrend direction and ADX for all timeframes"""
         mtf_data = {}
         
         for tf_key, tf_name in self.timeframes.items():
             if not self.show_timeframes[tf_key]:
                 continue
             
-            # Resample data to target timeframe
             resampled_df = self._resample_timeframe(df, tf_name)
             
             if resampled_df is None or len(resampled_df) < 50:
@@ -292,29 +297,23 @@ class Layer9Confirmation:
                 }
                 continue
             
-            # Calculate SuperTrend and ADX
             st_line, st_dir = self._calculate_supertrend(resampled_df)
             adx = self._calculate_adx(resampled_df)
             
             mtf_data[tf_key] = {
                 'direction': int(st_dir.iloc[-1]),
-                'adx': float(adx.iloc[-1]),
+                'adx': round(float(adx.iloc[-1]), 2),
                 'enabled': True
             }
         
         return mtf_data
     
     def _resample_timeframe(self, df: pd.DataFrame, timeframe: str) -> Optional[pd.DataFrame]:
-        """
-        Resample DataFrame to target timeframe
-        
-        Timeframe format: '5min', '15min', '1h', '4h', '1D'
-        """
+        """Resample DataFrame to target timeframe"""
         if not isinstance(df.index, pd.DatetimeIndex):
             return None
         
         try:
-            # Resample OHLCV data
             resampled = df.resample(timeframe).agg({
                 'open': 'first',
                 'high': 'max',
@@ -324,27 +323,28 @@ class Layer9Confirmation:
             }).dropna()
             
             return resampled
-        except Exception as e:
+        except Exception:
             return None
     
-    # ==================== ALIGNMENT CALCULATION ====================
+    # ==================== RAW ALIGNMENT CALCULATION ====================
     
-    def _calculate_alignment(self, mtf_data: Dict) -> Dict:
-        """
-        Calculate weighted alignment score
-        
-        Pine Script logic:
-        - For each timeframe: if direction matches current, add weight to weighted_sum
-        - alignment_score = (weighted_sum / total_weight) * 100
-        - Count bulls and bears
-        """
-        weighted_sum = 0.0
-        total_weight = 0.0
+    def _calculate_raw_alignment(self, mtf_data: Dict) -> Dict:
+        """Calculate raw alignment metrics - NO interpretation"""
         bull_count = 0
         bear_count = 0
+        aligned_count = 0
+        not_aligned_count = 0
+        weighted_aligned = 0.0
+        weighted_not_aligned = 0.0
+        total_weight = 0.0
+        total_timeframes = 0
+        
+        # Higher timeframe tracking (60, 240, D)
+        htf_bullish_count = 0
+        htf_bearish_count = 0
         
         for tf_key in self.timeframes.keys():
-            if tf_key not in mtf_data or not mtf_data[tf_key]['enabled']:
+            if tf_key not in mtf_data or not mtf_data[tf_key].get('enabled', False):
                 continue
             
             direction = mtf_data[tf_key]['direction']
@@ -352,79 +352,97 @@ class Layer9Confirmation:
             if direction is None:
                 continue
             
-            # Add to weighted sum if direction matches current timeframe
-            if direction == self.current_st_dir:
-                weighted_sum += self.weights[tf_key]
-            
-            total_weight += self.weights[tf_key]
+            total_timeframes += 1
+            weight = self.weights[tf_key]
+            total_weight += weight
             
             # Count bulls and bears
             if direction == 1:
                 bull_count += 1
             else:
                 bear_count += 1
+            
+            # Count alignment with current
+            if direction == self.current_st_dir:
+                aligned_count += 1
+                weighted_aligned += weight
+            else:
+                not_aligned_count += 1
+                weighted_not_aligned += weight
+            
+            # Track higher timeframes
+            if tf_key in ['60', '240', 'D']:
+                if direction == 1:
+                    htf_bullish_count += 1
+                else:
+                    htf_bearish_count += 1
         
-        # Calculate alignment score
-        alignment_score = (weighted_sum / total_weight * 100) if total_weight > 0 else 0
+        # Calculate alignment percentage
+        alignment_pct = (weighted_aligned / total_weight * 100) if total_weight > 0 else 0
+        
+        # HTF alignment check
+        htf_aligned = False
+        if self.current_st_dir == 1:
+            htf_aligned = htf_bullish_count >= 2
+        else:
+            htf_aligned = htf_bearish_count >= 2
         
         return {
-            'alignment_score': alignment_score,
             'bull_count': bull_count,
             'bear_count': bear_count,
-            'weighted_sum': weighted_sum,
-            'total_weight': total_weight
+            'aligned_count': aligned_count,
+            'not_aligned_count': not_aligned_count,
+            'weighted_aligned': round(weighted_aligned, 2),
+            'weighted_not_aligned': round(weighted_not_aligned, 2),
+            'total_weight': round(total_weight, 2),
+            'total_timeframes': total_timeframes,
+            'alignment_pct': round(alignment_pct, 2),
+            'htf_bullish_count': htf_bullish_count,
+            'htf_bearish_count': htf_bearish_count,
+            'htf_aligned': htf_aligned
         }
-    
-    # ==================== CONFIDENCE ADJUSTMENT ====================
-    
-    def _calculate_confidence_adjustment(self, alignment_score: float) -> int:
-        """
-        Calculate confidence adjustment based on alignment score
-        
-        Pine Script formula:
-        ≥80%: +20
-        ≥60%: +10
-        ≥40%: 0
-        ≥20%: -10
-        <20%: -20
-        """
-        if alignment_score >= 80:
-            return 20
-        elif alignment_score >= 60:
-            return 10
-        elif alignment_score >= 40:
-            return 0
-        elif alignment_score >= 20:
-            return -10
-        else:
-            return -20
-    
-    def _generate_signal(self, alignment_score: float) -> str:
-        """Generate trading signal based on alignment score"""
-        if alignment_score >= 80:
-            signal = "STRONG_ALIGN"
-        elif alignment_score >= 60:
-            signal = "GOOD_ALIGN"
-        elif alignment_score >= 40:
-            signal = "MODERATE_ALIGN"
-        elif alignment_score >= 20:
-            signal = "WEAK_ALIGN"
-        else:
-            signal = "NO_ALIGN"
-        
-        return signal
     
     def _empty_result(self, reason: str) -> Dict:
         """Return empty result structure"""
         return {
-            "error": reason,
             "current_timeframe": None,
-            "current_st_direction": 0,
-            "current_adx": 0,
-            "mtf_data": {},
-            "alignment_score": 0,
+            "current_st_direction": None,
+            "current_st_bullish": None,
+            "current_st_bearish": None,
+            "current_adx": None,
+            "current_st_line": None,
+            "tf_5min_direction": None,
+            "tf_5min_bullish": None,
+            "tf_5min_adx": None,
+            "tf_5min_weight": None,
+            "tf_15min_direction": None,
+            "tf_15min_bullish": None,
+            "tf_15min_adx": None,
+            "tf_15min_weight": None,
+            "tf_1h_direction": None,
+            "tf_1h_bullish": None,
+            "tf_1h_adx": None,
+            "tf_1h_weight": None,
+            "tf_4h_direction": None,
+            "tf_4h_bullish": None,
+            "tf_4h_adx": None,
+            "tf_4h_weight": None,
+            "tf_1d_direction": None,
+            "tf_1d_bullish": None,
+            "tf_1d_adx": None,
+            "tf_1d_weight": None,
             "bull_count": 0,
             "bear_count": 0,
-            "confidence_adjustment": 0,
-            "signal": "NO_ALIGN"
+            "total_timeframes": 0,
+            "aligned_with_current_count": 0,
+            "not_aligned_count": 0,
+            "weighted_aligned": 0,
+            "weighted_not_aligned": 0,
+            "total_weight": 0,
+            "alignment_pct": 0,
+            "htf_bullish_count": 0,
+            "htf_bearish_count": 0,
+            "htf_aligned": False,
+            "current_price": None,
+            "error": reason
         }
