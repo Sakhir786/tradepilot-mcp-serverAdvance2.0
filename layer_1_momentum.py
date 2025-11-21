@@ -1,6 +1,7 @@
 """
-Layer 1: Momentum Engine
-Combines RSI Divergence, MACD, Stochastic, CMF, ADX, and Ichimoku
+Layer 1: Momentum Engine (Raw Data Output)
+Combines RSI, MACD, Stochastic, CMF, ADX, and Ichimoku
+Outputs RAW indicator values only - no scores, no signals
 """
 import pandas as pd
 import numpy as np
@@ -31,12 +32,13 @@ class Layer1Momentum:
             df: OHLCV DataFrame with basic features
             
         Returns:
-            Dictionary with momentum analysis results
+            Dictionary with RAW momentum indicator values
         """
         df = df.copy()
         
         # Calculate RSI
         rsi = self._calculate_rsi(df, self.rsi_length)
+        rsi_7 = self._calculate_rsi(df, 7)  # Additional timeframe
         df["rsi"] = rsi
         
         # Calculate MACD
@@ -46,6 +48,10 @@ class Layer1Momentum:
         df["macd"] = macd_line
         df["macd_signal"] = signal_line
         df["macd_hist"] = macd_hist
+        
+        # MACD trend detection (raw)
+        macd_hist_prev = macd_hist.iloc[-2] if len(macd_hist) > 1 else 0
+        macd_hist_current = macd_hist.iloc[-1]
         
         # Calculate Stochastic
         k, d = self._calculate_stochastic(df, self.stoch_length, self.stoch_smooth)
@@ -71,53 +77,48 @@ class Layer1Momentum:
         df["ichimoku_lead1"] = lead1
         df["ichimoku_lead2"] = lead2
         
-        # Calculate momentum scores
-        rsi_momentum = self._calc_rsi_momentum(rsi.iloc[-1])
-        macd_momentum = self._calc_macd_momentum(df["macd_hist"])
-        stoch_momentum = self._calc_stoch_momentum(k.iloc[-1])
-        trend_momentum = self._calc_trend_momentum(adx.iloc[-1], plus_di.iloc[-1], minus_di.iloc[-1])
-        cmf_momentum = cmf.iloc[-1] * 100 if not pd.isna(cmf.iloc[-1]) else 0
+        # Current price for context
+        current_price = df["close"].iloc[-1]
         
-        # Combined momentum score (-100 to +100)
-        momentum_score = (rsi_momentum + macd_momentum + stoch_momentum + trend_momentum + cmf_momentum) / 5
-        
-        # Trend classification
-        trend_strength = self._classify_trend_strength(adx.iloc[-1])
-        trend_direction = "BULLISH" if plus_di.iloc[-1] > minus_di.iloc[-1] else "BEARISH"
-        
-        # Cloud trend
-        cloud_trend = self._classify_cloud_trend(
-            df["close"].iloc[-1], lead1.iloc[-1], lead2.iloc[-1]
-        )
-        
-        # Signal generation
-        signal = self._generate_signal(
-            momentum_score, trend_direction, adx.iloc[-1], cloud_trend
-        )
-        
+        # Return RAW DATA ONLY - no scores, no signals
         return {
-            "momentum_score": round(momentum_score, 2),
-            "rsi": round(rsi.iloc[-1], 2),
-            "rsi_momentum": round(rsi_momentum, 2),
-            "macd": round(macd_line.iloc[-1], 4),
-            "macd_signal": round(signal_line.iloc[-1], 4),
-            "macd_hist": round(macd_hist.iloc[-1], 4),
-            "macd_momentum": round(macd_momentum, 2),
-            "stochastic_k": round(k.iloc[-1], 2),
-            "stochastic_d": round(d.iloc[-1], 2),
-            "stoch_momentum": round(stoch_momentum, 2),
+            # RSI Data
+            "rsi_14": round(rsi.iloc[-1], 2),
+            "rsi_7": round(rsi_7.iloc[-1], 2),
+            "rsi_prev": round(rsi.iloc[-2], 2) if len(rsi) > 1 else None,
+            
+            # MACD Data
+            "macd_line": round(macd_line.iloc[-1], 4),
+            "macd_signal_line": round(signal_line.iloc[-1], 4),
+            "macd_histogram": round(macd_hist.iloc[-1], 4),
+            "macd_histogram_prev": round(macd_hist_prev, 4),
+            "macd_histogram_rising": macd_hist_current > macd_hist_prev,
+            
+            # Stochastic Data
+            "stoch_k": round(k.iloc[-1], 2),
+            "stoch_d": round(d.iloc[-1], 2),
+            "stoch_k_prev": round(k.iloc[-2], 2) if len(k) > 1 else None,
+            
+            # CMF Data
             "cmf": round(cmf.iloc[-1], 4),
-            "cmf_momentum": round(cmf_momentum, 2),
+            "cmf_prev": round(cmf.iloc[-2], 4) if len(cmf) > 1 else None,
+            
+            # ADX/DMI Data
             "adx": round(adx.iloc[-1], 2),
             "plus_di": round(plus_di.iloc[-1], 2),
             "minus_di": round(minus_di.iloc[-1], 2),
-            "trend_strength": trend_strength,
-            "trend_direction": trend_direction,
-            "trend_momentum": round(trend_momentum, 2),
+            "di_diff": round(plus_di.iloc[-1] - minus_di.iloc[-1], 2),
+            
+            # Ichimoku Data
             "ichimoku_conv": round(conv_line.iloc[-1], 2),
             "ichimoku_base": round(base_line.iloc[-1], 2),
-            "cloud_trend": cloud_trend,
-            "signal": signal
+            "ichimoku_lead1": round(lead1.iloc[-1], 2),
+            "ichimoku_lead2": round(lead2.iloc[-1], 2),
+            "price_vs_cloud_top": round(current_price - max(lead1.iloc[-1], lead2.iloc[-1]), 2),
+            "price_vs_cloud_bottom": round(current_price - min(lead1.iloc[-1], lead2.iloc[-1]), 2),
+            
+            # Price Context
+            "current_price": round(current_price, 2)
         }
     
     def _calculate_rsi(self, df: pd.DataFrame, period: int) -> pd.Series:
@@ -194,66 +195,3 @@ class Layer1Momentum:
         lead2 = (df["high"].rolling(window=span).max() + df["low"].rolling(window=span).min()) / 2
         
         return conv_line, base_line, lead1, lead2
-    
-    def _calc_rsi_momentum(self, rsi: float) -> float:
-        """Convert RSI to momentum score"""
-        if rsi > 50:
-            return (rsi - 50) / 50 * 100
-        else:
-            return -(50 - rsi) / 50 * 100
-    
-    def _calc_macd_momentum(self, macd_hist: pd.Series) -> float:
-        """Convert MACD histogram to momentum score"""
-        current_hist = macd_hist.iloc[-1]
-        hist_abs = abs(macd_hist)
-        max_hist = hist_abs.rolling(window=100).max().iloc[-1]
-        
-        if max_hist == 0:
-            return 0
-        
-        if current_hist > 0:
-            return 100 * (current_hist / max_hist)
-        else:
-            return -100 * (abs(current_hist) / max_hist)
-    
-    def _calc_stoch_momentum(self, k: float) -> float:
-        """Convert Stochastic to momentum score"""
-        return (k - 50) / 50 * 100
-    
-    def _calc_trend_momentum(self, adx: float, plus_di: float, minus_di: float) -> float:
-        """Convert ADX/DMI to momentum score"""
-        if plus_di > minus_di:
-            return (adx / 100) * 100
-        else:
-            return -(adx / 100) * 100
-    
-    def _classify_trend_strength(self, adx: float) -> str:
-        """Classify trend strength based on ADX"""
-        if adx > 40:
-            return "STRONG"
-        elif adx > 25:
-            return "MODERATE"
-        else:
-            return "WEAK"
-    
-    def _classify_cloud_trend(self, price: float, lead1: float, lead2: float) -> str:
-        """Classify Ichimoku cloud trend"""
-        if price > lead1 and price > lead2:
-            return "BULLISH"
-        elif price < lead1 and price < lead2:
-            return "BEARISH"
-        else:
-            return "NEUTRAL"
-    
-    def _generate_signal(self, momentum_score: float, trend_dir: str, adx: float, cloud_trend: str) -> str:
-        """Generate trading signal"""
-        if momentum_score > 50 and trend_dir == "BULLISH" and adx > 25 and cloud_trend == "BULLISH":
-            return "STRONG_BUY"
-        elif momentum_score > 20 and trend_dir == "BULLISH":
-            return "BUY"
-        elif momentum_score < -50 and trend_dir == "BEARISH" and adx > 25 and cloud_trend == "BEARISH":
-            return "STRONG_SELL"
-        elif momentum_score < -20 and trend_dir == "BEARISH":
-            return "SELL"
-        else:
-            return "NEUTRAL"
