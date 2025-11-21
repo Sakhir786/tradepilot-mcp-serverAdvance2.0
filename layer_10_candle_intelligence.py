@@ -1,14 +1,7 @@
 """
-Layer 10: Candle Intelligence Engine - UPGRADED
-Advanced candlestick pattern detection with quality scoring
-
-Converts 4 Pine Script indicators:
-1. Three White Soldiers PRO
-2. Inside Bar PRO 
-3. Candlestick Patterns PRO (15 patterns)
-4. Morning/Evening Star PRO
-
-CRITICAL: Logic preserved exactly from Pine Script - NO MODIFICATIONS
+Layer 10: Candle Intelligence Engine (Raw Data Output)
+Advanced candlestick pattern detection
+Outputs RAW pattern data only - no signals
 """
 import pandas as pd
 import numpy as np
@@ -16,7 +9,7 @@ from typing import Dict, List, Tuple
 
 
 class Layer10CandleIntelligence:
-    """Advanced candle pattern intelligence with quality scoring"""
+    """Advanced candle pattern intelligence - raw data output"""
     
     def __init__(self):
         """Initialize candle intelligence analyzer"""
@@ -30,13 +23,10 @@ class Layer10CandleIntelligence:
             df: DataFrame with OHLCV + calculated columns
             
         Returns:
-            Dict with all pattern detection results
+            Dict with RAW pattern detection results
         """
         if len(df) < 50:
-            return {
-                "error": "Insufficient data (need 50+ bars)",
-                "signal": "NEUTRAL"
-            }
+            return self._empty_result("Insufficient data (need 50+ bars)")
         
         df = df.copy()
         
@@ -56,62 +46,120 @@ class Layer10CandleIntelligence:
         candlestick_patterns = self._detect_candlestick_patterns(df)
         star_patterns = self._detect_star_patterns(df)
         
-        # Aggregate signals
-        bullish_signals = []
-        bearish_signals = []
+        # Count patterns
+        bullish_patterns = [p for p in candlestick_patterns['patterns'] if p in 
+                          ["Hammer", "Inverted Hammer", "Morning Star", "Bullish Engulfing", 
+                           "Bullish Harami", "Piercing Line", "Bullish Kicker"]]
+        bearish_patterns = [p for p in candlestick_patterns['patterns'] if p in 
+                          ["Hanging Man", "Shooting Star", "Evening Star", "Bearish Engulfing",
+                           "Bearish Harami", "Dark Cloud", "Bearish Kicker"]]
         
-        if three_white_soldiers['signal']:
-            bullish_signals.append(('3WS', three_white_soldiers['quality_score']))
-        
-        if inside_bar['bullish_breakout']:
-            bullish_signals.append(('IB_Bull', inside_bar['quality_score']))
-        if inside_bar['bearish_breakout']:
-            bearish_signals.append(('IB_Bear', inside_bar['quality_score']))
-        
-        if candlestick_patterns['bullish_count'] > 0:
-            bullish_signals.append(('Patterns', candlestick_patterns['bull_quality']))
-        if candlestick_patterns['bearish_count'] > 0:
-            bearish_signals.append(('Patterns', candlestick_patterns['bear_quality']))
-        
-        if star_patterns['bullish_morning_star']:
-            bullish_signals.append(('MS', star_patterns['bullish_quality']))
-        if star_patterns['bearish_evening_star']:
-            bearish_signals.append(('ES', star_patterns['bearish_quality']))
-        
-        # Overall signal determination
-        bullish_score = sum([q for _, q in bullish_signals])
-        bearish_score = sum([q for _, q in bearish_signals])
-        
-        if bullish_score > bearish_score and bullish_score >= 60:
-            signal = "BUY"
-            confidence = min(bullish_score / 100, 1.0)
-        elif bearish_score > bullish_score and bearish_score >= 60:
-            signal = "SELL"
-            confidence = min(bearish_score / 100, 1.0)
-        else:
-            signal = "NEUTRAL"
-            confidence = 0.5
-        
+        # Return RAW DATA ONLY - no signals
         return {
-            "signal": signal,
-            "confidence": round(confidence, 2),
-            "bullish_signals": bullish_signals,
-            "bearish_signals": bearish_signals,
-            "three_white_soldiers": three_white_soldiers,
-            "inside_bar": inside_bar,
-            "candlestick_patterns": candlestick_patterns,
-            "star_patterns": star_patterns
+            # Three White Soldiers Data
+            "tws_detected": three_white_soldiers["signal"],
+            "tws_quality": three_white_soldiers["quality_score"],
+            "tws_high_quality": three_white_soldiers["high_quality"],
+            "tws_pattern_base": three_white_soldiers["pattern_base"],
+            "tws_volume_strong": three_white_soldiers["volume_strong"],
+            "tws_after_downtrend": three_white_soldiers["after_downtrend"],
+            "tws_near_support": three_white_soldiers["near_support"],
+            "tws_entry": three_white_soldiers["entry_price"],
+            "tws_stop": three_white_soldiers["stop_loss"],
+            "tws_target1": three_white_soldiers["target1"],
+            "tws_target2": three_white_soldiers["target2"],
+            
+            # Inside Bar Data
+            "ib_detected": inside_bar["inside_bar_signal"],
+            "ib_bullish_breakout": inside_bar["bullish_breakout"],
+            "ib_bearish_breakout": inside_bar["bearish_breakout"],
+            "ib_quality": inside_bar["quality_score"],
+            "ib_mother_high": inside_bar["mother_high"],
+            "ib_mother_low": inside_bar["mother_low"],
+            "ib_inside_ratio_pct": inside_bar["inside_ratio"],
+            "ib_bull_entry": inside_bar["bull_entry"],
+            "ib_bull_stop": inside_bar["bull_stop"],
+            "ib_bull_target1": inside_bar["bull_target1"],
+            "ib_bull_target2": inside_bar["bull_target2"],
+            "ib_bear_entry": inside_bar["bear_entry"],
+            "ib_bear_stop": inside_bar["bear_stop"],
+            "ib_bear_target1": inside_bar["bear_target1"],
+            "ib_bear_target2": inside_bar["bear_target2"],
+            
+            # Candlestick Patterns Data
+            "patterns_detected": candlestick_patterns["patterns"],
+            "bullish_patterns": bullish_patterns,
+            "bearish_patterns": bearish_patterns,
+            "bullish_pattern_count": candlestick_patterns["bullish_count"],
+            "bearish_pattern_count": candlestick_patterns["bearish_count"],
+            "neutral_pattern_count": candlestick_patterns["neutral_count"],
+            "doji_detected": "Doji" in candlestick_patterns["patterns"],
+            "hammer_detected": "Hammer" in candlestick_patterns["patterns"],
+            "inverted_hammer_detected": "Inverted Hammer" in candlestick_patterns["patterns"],
+            "hanging_man_detected": "Hanging Man" in candlestick_patterns["patterns"],
+            "shooting_star_detected": "Shooting Star" in candlestick_patterns["patterns"],
+            "morning_star_detected": "Morning Star" in candlestick_patterns["patterns"],
+            "evening_star_detected": "Evening Star" in candlestick_patterns["patterns"],
+            "bullish_engulfing_detected": "Bullish Engulfing" in candlestick_patterns["patterns"],
+            "bearish_engulfing_detected": "Bearish Engulfing" in candlestick_patterns["patterns"],
+            "bullish_harami_detected": "Bullish Harami" in candlestick_patterns["patterns"],
+            "bearish_harami_detected": "Bearish Harami" in candlestick_patterns["patterns"],
+            "piercing_line_detected": "Piercing Line" in candlestick_patterns["patterns"],
+            "dark_cloud_detected": "Dark Cloud" in candlestick_patterns["patterns"],
+            "bullish_kicker_detected": "Bullish Kicker" in candlestick_patterns["patterns"],
+            "bearish_kicker_detected": "Bearish Kicker" in candlestick_patterns["patterns"],
+            "patterns_bull_quality": candlestick_patterns["bull_quality"],
+            "patterns_bear_quality": candlestick_patterns["bear_quality"],
+            
+            # Star Patterns Data
+            "morning_star_pro_detected": star_patterns["bullish_morning_star"],
+            "evening_star_pro_detected": star_patterns["bearish_evening_star"],
+            "morning_star_quality": star_patterns["bullish_quality"],
+            "evening_star_quality": star_patterns["bearish_quality"],
+            "morning_star_high_quality": star_patterns["bullish_high_quality"],
+            "evening_star_high_quality": star_patterns["bearish_high_quality"],
+            "morning_star_entry": star_patterns["bullish_entry"],
+            "morning_star_stop": star_patterns["bullish_stop"],
+            "morning_star_target1": star_patterns["bullish_target1"],
+            "morning_star_target2": star_patterns["bullish_target2"],
+            "evening_star_entry": star_patterns["bearish_entry"],
+            "evening_star_stop": star_patterns["bearish_stop"],
+            "evening_star_target1": star_patterns["bearish_target1"],
+            "evening_star_target2": star_patterns["bearish_target2"],
+            
+            # Summary Counts (raw facts)
+            "total_bullish_patterns": (candlestick_patterns["bullish_count"] + 
+                                       (1 if three_white_soldiers["signal"] else 0) +
+                                       (1 if inside_bar["bullish_breakout"] else 0) +
+                                       (1 if star_patterns["bullish_morning_star"] else 0)),
+            "total_bearish_patterns": (candlestick_patterns["bearish_count"] +
+                                       (1 if inside_bar["bearish_breakout"] else 0) +
+                                       (1 if star_patterns["bearish_evening_star"] else 0)),
+            "total_patterns_detected": len(candlestick_patterns["patterns"]),
+            
+            # Candle Context
+            "current_candle_bullish": df['close'].iloc[-1] > df['open'].iloc[-1],
+            "current_candle_bearish": df['close'].iloc[-1] < df['open'].iloc[-1],
+            "current_body_size": round(df['body'].iloc[-1], 4),
+            "current_range": round(df['range'].iloc[-1], 4),
+            "current_upper_wick": round(df['upper_wick'].iloc[-1], 4),
+            "current_lower_wick": round(df['lower_wick'].iloc[-1], 4),
+            "avg_body": round(df['body'].rolling(window=14).mean().iloc[-1], 4),
+            "body_vs_avg_ratio": round(df['body'].iloc[-1] / df['body'].rolling(window=14).mean().iloc[-1], 2),
+            
+            # Price Context
+            "current_price": round(df["close"].iloc[-1], 2)
         }
     
     def _detect_three_white_soldiers(self, df: pd.DataFrame) -> Dict:
-        """
-        Three White Soldiers pattern detection
-        Logic preserved exactly from Three_White_Soldiers.txt
-        """
+        """Three White Soldiers pattern detection - logic preserved from Pine Script"""
         if len(df) < 20:
-            return {"signal": False, "quality_score": 0}
+            return {"signal": False, "quality_score": 0, "high_quality": False,
+                    "pattern_base": False, "volume_strong": False, "after_downtrend": False,
+                    "near_support": False, "entry_price": 0, "stop_loss": 0,
+                    "target1": 0, "target2": 0, "risk_reward": 0}
         
-        # Settings (using defaults from Pine Script)
+        # Settings
         min_body_size = 0.4
         max_shadow_size = 0.30
         volume_increase = 1.2
@@ -122,10 +170,9 @@ class Layer10CandleIntelligence:
         min_quality_score = 30
         risk_reward_ratio = 2.5
         
-        # Average body calculation
         avg_body = df['body'].ewm(span=14, adjust=False).mean()
         
-        # Get last 3 candles (indices -3, -2, -1)
+        # Get last 3 candles
         candle1_body = abs(df['close'].iloc[-3] - df['open'].iloc[-3])
         candle1_high = df['high'].iloc[-3]
         candle1_low = df['low'].iloc[-3]
@@ -150,13 +197,13 @@ class Layer10CandleIntelligence:
         candle3_bullish = df['close'].iloc[-1] > df['open'].iloc[-1]
         candle3_upper_shadow = candle3_high - max(candle3_open, candle3_close)
         
-        # Bodies long enough check
+        # Bodies long enough
         candle1_long = candle1_body >= (avg_body.iloc[-3] * min_body_size)
         candle2_long = candle2_body >= (avg_body.iloc[-2] * min_body_size)
         candle3_long = candle3_body >= (avg_body.iloc[-1] * min_body_size)
         bodies_long_enough = candle1_long and candle2_long and candle3_long
         
-        # Shadows small enough check
+        # Shadows small enough
         shadow1_ok = candle1_upper_shadow <= (candle1_body * max_shadow_size)
         shadow2_ok = candle2_upper_shadow <= (candle2_body * max_shadow_size)
         shadow3_ok = candle3_upper_shadow <= (candle3_body * max_shadow_size)
@@ -177,7 +224,7 @@ class Layer10CandleIntelligence:
         distance_to_support = (candle1_low - support_level) / candle1_low
         is_near_support = distance_to_support <= support_proximity
         
-        # Quality score calculation
+        # Quality score
         safe_candle1_body = max(candle1_body, 0.0001)
         safe_candle2_body = max(candle2_body, 0.0001)
         safe_candle3_body = max(candle3_body, 0.0001)
@@ -193,12 +240,7 @@ class Layer10CandleIntelligence:
         total_body = candle1_body + candle2_body + candle3_body
         body_consistency = 1.0 - ((body_diff_12 + body_diff_23) / total_body) if total_body > 0 else 0.0
         
-        quality_score = 20.0
-        quality_score += 25.0  # Volume (not filtering)
-        quality_score += 25.0  # Trend (not filtering)
-        quality_score += 15.0  # Support (not filtering)
-        quality_score += (shadow_quality * 10.0)
-        quality_score += (body_consistency * 5.0)
+        quality_score = 20.0 + 25.0 + 25.0 + 15.0 + (shadow_quality * 10.0) + (body_consistency * 5.0)
         
         # Pattern base conditions
         all_bullish = candle1_bullish and candle2_bullish and candle3_bullish
@@ -234,83 +276,50 @@ class Layer10CandleIntelligence:
         }
     
     def _detect_inside_bar(self, df: pd.DataFrame) -> Dict:
-        """
-        Inside Bar pattern detection with breakout signals
-        Logic preserved exactly from Inside_Bar.txt
-        """
+        """Inside Bar pattern detection - logic preserved from Pine Script"""
         if len(df) < 20:
             return {
-                "inside_bar_signal": False,
-                "bullish_breakout": False,
-                "bearish_breakout": False,
-                "quality_score": 0
+                "inside_bar_signal": False, "bullish_breakout": False, "bearish_breakout": False,
+                "quality_score": 0, "mother_high": 0, "mother_low": 0, "inside_ratio": 0,
+                "bull_entry": 0, "bull_stop": 0, "bull_target1": 0, "bull_target2": 0,
+                "bear_entry": 0, "bear_stop": 0, "bear_target1": 0, "bear_target2": 0
             }
         
-        # Settings (using defaults from Pine Script)
+        # Settings
         min_mother_size = 1.5
         max_inside_ratio = 0.75
-        volume_multiplier = 1.5
-        trend_ma_length = 50
-        sr_lookback = 20
         min_quality = 50
         long_target1_mult = 1.0
         long_target2_mult = 1.5
         short_target1_mult = 1.0
         short_target2_mult = 1.5
         
-        # Average range
         avg_range = df['range'].rolling(window=14).mean()
         
-        # Current bar (index -1)
+        # Current bar
         current_high = df['high'].iloc[-1]
         current_low = df['low'].iloc[-1]
-        current_open = df['open'].iloc[-1]
         current_close = df['close'].iloc[-1]
         current_range = df['range'].iloc[-1]
         
-        # Mother bar (index -2)
+        # Mother bar
         mother_high = df['high'].iloc[-2]
         mother_low = df['low'].iloc[-2]
-        mother_open = df['open'].iloc[-2]
-        mother_close = df['close'].iloc[-2]
         mother_range = df['range'].iloc[-2]
         
         # Inside bar definition
         is_inside = current_high < mother_high and current_low > mother_low
-        
-        # Mother bar must be significant
         mother_is_large = mother_range >= (avg_range.iloc[-2] * min_mother_size)
-        
-        # Inside bar should be notably smaller
         inside_ratio = current_range / max(mother_range, 0.0001)
         inside_is_tight = inside_ratio <= max_inside_ratio
         
-        # Base pattern
         base_pattern = is_inside and mother_is_large and inside_is_tight
         
-        # Volume check
-        avg_vol = df['volume'].rolling(window=20).mean().iloc[-1]
-        has_volume = df['volume'].iloc[-1] >= (avg_vol * volume_multiplier)
-        
-        # Trend context
-        trend_ma = df['close'].rolling(window=trend_ma_length).mean().iloc[-1]
-        is_uptrend = df['close'].iloc[-1] > trend_ma
-        is_downtrend = df['close'].iloc[-1] < trend_ma
-        
-        # S/R proximity
-        highest_level = df['high'].iloc[-sr_lookback:].max()
-        lowest_level = df['low'].iloc[-sr_lookback:].min()
-        near_resistance = (highest_level - current_high) / current_high < 0.02
-        near_support = (current_low - lowest_level) / current_low < 0.02
-        
-        # Quality score calculation
+        # Quality score
         quality_score = 0.0
-        
-        # Base pattern (30 points)
         if base_pattern:
             quality_score += 30.0
         
-        # Mother bar size quality (20 points)
         mother_size_ratio = mother_range / avg_range.iloc[-2]
         if mother_size_ratio >= 2.0:
             quality_score += 20.0
@@ -319,7 +328,6 @@ class Layer10CandleIntelligence:
         elif mother_size_ratio >= 1.0:
             quality_score += 10.0
         
-        # Inside bar tightness (15 points)
         if inside_ratio < 0.4:
             quality_score += 15.0
         elif inside_ratio < 0.6:
@@ -327,49 +335,29 @@ class Layer10CandleIntelligence:
         elif inside_ratio < 0.75:
             quality_score += 5.0
         
-        # Volume confirmation (15 points) - not filtering
-        quality_score += 15.0
+        quality_score += 15.0 + 10.0 + 10.0  # Volume, Trend, S/R
         
-        # Trend alignment (10 points)
-        quality_score += 10.0
-        
-        # S/R proximity (10 points)
-        quality_score += 10.0
-        
-        # Final inside bar signal
         inside_bar_signal = base_pattern and quality_score >= min_quality
         
-        # Breakout detection (check previous bar for inside bar)
+        # Breakout detection
         was_inside_bar = False
-        prev_quality = 0
         if len(df) >= 3:
-            # Check if bar at -2 was inside bar relative to bar at -3
             prev_current_high = df['high'].iloc[-2]
             prev_current_low = df['low'].iloc[-2]
             prev_mother_high = df['high'].iloc[-3]
             prev_mother_low = df['low'].iloc[-3]
-            prev_was_inside = prev_current_high < prev_mother_high and prev_current_low > prev_mother_low
-            
-            # Would need to recalculate quality for -2, simplified here
-            was_inside_bar = prev_was_inside
-            prev_quality = quality_score  # Approximation
+            was_inside_bar = prev_current_high < prev_mother_high and prev_current_low > prev_mother_low
         
-        # Breakout conditions
         bullish_breakout = was_inside_bar and current_close > mother_high
         bearish_breakout = was_inside_bar and current_close < mother_low
         
-        # Volume confirmed breakouts (not filtering in this case)
-        bull_breakout_confirmed = bullish_breakout
-        bear_breakout_confirmed = bearish_breakout
-        
-        # Entry/Stop/Targets for bullish
+        # Entry/Stop/Targets
         bull_entry = mother_high
         bull_stop = mother_low
         bull_risk = bull_entry - bull_stop
         bull_target1 = bull_entry + (bull_risk * long_target1_mult)
         bull_target2 = bull_entry + (bull_risk * long_target2_mult)
         
-        # Entry/Stop/Targets for bearish
         bear_entry = mother_low
         bear_stop = mother_high
         bear_risk = bear_stop - bear_entry
@@ -378,8 +366,8 @@ class Layer10CandleIntelligence:
         
         return {
             "inside_bar_signal": bool(inside_bar_signal),
-            "bullish_breakout": bool(bull_breakout_confirmed),
-            "bearish_breakout": bool(bear_breakout_confirmed),
+            "bullish_breakout": bool(bullish_breakout),
+            "bearish_breakout": bool(bearish_breakout),
             "quality_score": round(quality_score, 2),
             "mother_high": round(mother_high, 2),
             "mother_low": round(mother_low, 2),
@@ -395,23 +383,14 @@ class Layer10CandleIntelligence:
         }
     
     def _detect_candlestick_patterns(self, df: pd.DataFrame) -> Dict:
-        """
-        15 candlestick patterns detection
-        Logic preserved exactly from Candlestick_Patterns.txt
-        """
+        """15 candlestick patterns detection - logic preserved from Pine Script"""
         if len(df) < 3:
-            return {
-                "bullish_count": 0,
-                "bearish_count": 0,
-                "neutral_count": 0,
-                "patterns": []
-            }
+            return {"bullish_count": 0, "bearish_count": 0, "neutral_count": 0,
+                    "patterns": [], "bull_quality": 0, "bear_quality": 0}
         
         # Settings
         doji_size = 0.05
         body_avg_period = 14
-        volume_multiplier = 1.3
-        trend_ma_length = 50
         min_quality = 50
         
         # Current candle
@@ -424,25 +403,19 @@ class Layer10CandleIntelligence:
         c_upper_wick = c_high - max(c_open, c_close)
         c_lower_wick = min(c_open, c_close) - c_low
         
-        # Previous candle (p1)
+        # Previous candles
         p1_open = df['open'].iloc[-2]
         p1_high = df['high'].iloc[-2]
         p1_low = df['low'].iloc[-2]
         p1_close = df['close'].iloc[-2]
         p1_body = abs(p1_close - p1_open)
         
-        # Previous candle (p2)
         p2_open = df['open'].iloc[-3]
-        p2_high = df['high'].iloc[-3]
-        p2_low = df['low'].iloc[-3]
         p2_close = df['close'].iloc[-3]
         p2_body = abs(p2_close - p2_open)
         
-        # Averages
         avg_body = df['body'].rolling(window=body_avg_period).mean().iloc[-1]
-        avg_vol = df['volume'].rolling(window=20).mean().iloc[-1]
         
-        # Bullish/Bearish flags
         is_bullish = c_close > c_open
         is_bearish = c_close < c_open
         p1_bullish = p1_close > p1_open
@@ -450,126 +423,64 @@ class Layer10CandleIntelligence:
         p2_bullish = p2_close > p2_open
         p2_bearish = p2_close < p2_open
         
-        # Trend
-        trend_ma = df['close'].rolling(window=trend_ma_length).mean().iloc[-1]
-        is_uptrend = c_close > trend_ma
-        is_downtrend = c_close < trend_ma
+        # Pattern detection
+        doji = c_body <= (c_range * doji_size)
         
-        # Volume
-        has_volume = df['volume'].iloc[-1] >= (avg_vol * volume_multiplier)
+        hammer = (c_range > 3 * c_body and 
+                 (c_close - c_low) / (c_range + 0.001) > 0.6 and 
+                 (c_open - c_low) / (c_range + 0.001) > 0.6)
         
-        # Pattern detection functions
-        def detect_doji():
-            return c_body <= (c_range * doji_size)
+        inverted_hammer = (c_range > 3 * c_body and 
+                         (c_high - c_close) / (c_range + 0.001) > 0.6 and 
+                         (c_high - c_open) / (c_range + 0.001) > 0.6)
         
-        def detect_hammer():
-            return (c_range > 3 * c_body and 
-                   (c_close - c_low) / (c_range + 0.001) > 0.6 and 
-                   (c_open - c_low) / (c_range + 0.001) > 0.6)
+        hanging_man = (c_range > 4 * c_body and 
+                      (c_close - c_low) / (c_range + 0.001) >= 0.75 and 
+                      (c_open - c_low) / (c_range + 0.001) >= 0.75 and 
+                      p1_high < c_open and df['high'].iloc[-3] < c_open)
         
-        def detect_inverted_hammer():
-            return (c_range > 3 * c_body and 
-                   (c_high - c_close) / (c_range + 0.001) > 0.6 and 
-                   (c_high - c_open) / (c_range + 0.001) > 0.6)
+        shooting_star = (p1_bullish and c_open > p1_close and 
+                        c_upper_wick >= abs(c_open - c_close) * 3 and 
+                        c_lower_wick <= abs(c_open - c_close))
         
-        def detect_hanging_man():
-            return (c_range > 4 * c_body and 
-                   (c_close - c_low) / (c_range + 0.001) >= 0.75 and 
-                   (c_open - c_low) / (c_range + 0.001) >= 0.75 and 
-                   p1_high < c_open and p2_high < c_open)
+        morning_star = (p2_bearish and 
+                       max(p1_open, p1_close) < p2_close and 
+                       c_open > max(p1_open, p1_close) and is_bullish)
         
-        def detect_shooting_star():
-            return (p1_bullish and c_open > p1_close and 
-                   c_upper_wick >= abs(c_open - c_close) * 3 and 
-                   c_lower_wick <= abs(c_open - c_close))
+        evening_star = (p2_bullish and 
+                       min(p1_open, p1_close) > p2_close and 
+                       c_open < min(p1_open, p1_close) and is_bearish)
         
-        def detect_morning_star():
-            return (p2_bearish and 
-                   max(p1_open, p1_close) < p2_close and 
-                   c_open > max(p1_open, p1_close) and 
-                   is_bullish)
+        bullish_engulfing = (p1_bearish and is_bullish and 
+                           c_close >= p1_open and p1_close >= c_open and c_body > p1_body)
         
-        def detect_evening_star():
-            return (p2_bullish and 
-                   min(p1_open, p1_close) > p2_close and 
-                   c_open < min(p1_open, p1_close) and 
-                   is_bearish)
+        bearish_engulfing = (p1_bullish and is_bearish and 
+                           c_open >= p1_close and p1_open >= c_close and c_body > p1_body)
         
-        def detect_bullish_engulfing():
-            return (p1_bearish and is_bullish and 
-                   c_close >= p1_open and p1_close >= c_open and 
-                   c_body > p1_body)
+        bullish_harami = (p1_bearish and is_bullish and 
+                        c_close <= p1_open and p1_close <= c_open and c_body < p1_body)
         
-        def detect_bearish_engulfing():
-            return (p1_bullish and is_bearish and 
-                   c_open >= p1_close and p1_open >= c_close and 
-                   c_body > p1_body)
+        bearish_harami = (p1_bullish and is_bearish and 
+                        c_open <= p1_close and p1_open <= c_close and c_body < p1_body)
         
-        def detect_bullish_harami():
-            return (p1_bearish and is_bullish and 
-                   c_close <= p1_open and p1_close <= c_open and 
-                   c_body < p1_body)
+        piercing_line = (p1_bearish and c_open < p1_low and 
+                        c_close > p1_close + (p1_body / 2) and c_close < p1_open)
         
-        def detect_bearish_harami():
-            return (p1_bullish and is_bearish and 
-                   c_open <= p1_close and p1_open <= c_close and 
-                   c_body < p1_body)
+        dark_cloud = (p1_bullish and ((p1_close + p1_open) / 2) > c_close and 
+                     is_bearish and c_open > p1_close and c_close > p1_open and 
+                     (c_body / (c_range + 0.001)) > 0.6)
         
-        def detect_piercing_line():
-            return (p1_bearish and c_open < p1_low and 
-                   c_close > p1_close + (p1_body / 2) and 
-                   c_close < p1_open)
+        bullish_kicker = p1_bearish and c_open >= p1_open and is_bullish
+        bearish_kicker = p1_bullish and c_open <= p1_open and is_bearish
         
-        def detect_dark_cloud_cover():
-            return (p1_bullish and 
-                   ((p1_close + p1_open) / 2) > c_close and 
-                   is_bearish and c_open > p1_close and 
-                   c_close > p1_open and 
-                   (c_body / (c_range + 0.001)) > 0.6)
-        
-        def detect_bullish_kicker():
-            return p1_bearish and c_open >= p1_open and is_bullish
-        
-        def detect_bearish_kicker():
-            return p1_bullish and c_open <= p1_open and is_bearish
-        
-        # Execute pattern detection
-        doji = detect_doji()
-        hammer = detect_hammer()
-        inverted_hammer = detect_inverted_hammer()
-        hanging_man = detect_hanging_man()
-        shooting_star = detect_shooting_star()
-        morning_star = detect_morning_star()
-        evening_star = detect_evening_star()
-        bullish_engulfing = detect_bullish_engulfing()
-        bearish_engulfing = detect_bearish_engulfing()
-        bullish_harami = detect_bullish_harami()
-        bearish_harami = detect_bearish_harami()
-        piercing_line = detect_piercing_line()
-        dark_cloud = detect_dark_cloud_cover()
-        bullish_kicker = detect_bullish_kicker()
-        bearish_kicker = detect_bearish_kicker()
-        
-        # Quality scoring function
-        def calc_quality(pattern_type):
-            score = 50.0
-            # Volume (20 points) - not filtering
-            score += 20.0
-            # Trend (20 points) - not filtering
-            score += 20.0
-            # Body size (10 points)
-            if c_body >= avg_body:
-                score += 10.0
-            return score
-        
-        quality_bullish = calc_quality("bullish")
-        quality_bearish = calc_quality("bearish")
+        # Quality scoring
+        quality_bullish = 50.0 + 20.0 + 20.0 + (10.0 if c_body >= avg_body else 0)
+        quality_bearish = 50.0 + 20.0 + 20.0 + (10.0 if c_body >= avg_body else 0)
         quality_neutral = 60.0
         
-        # Apply filters and create signals
+        # Build patterns list
         patterns_detected = []
         
-        # Bullish patterns
         if hammer and quality_bullish >= min_quality:
             patterns_detected.append("Hammer")
         if inverted_hammer and quality_bullish >= min_quality:
@@ -585,7 +496,6 @@ class Layer10CandleIntelligence:
         if bullish_kicker and quality_bullish >= min_quality:
             patterns_detected.append("Bullish Kicker")
         
-        # Bearish patterns
         if hanging_man and quality_bearish >= min_quality:
             patterns_detected.append("Hanging Man")
         if shooting_star and quality_bearish >= min_quality:
@@ -601,18 +511,16 @@ class Layer10CandleIntelligence:
         if bearish_kicker and quality_bearish >= min_quality:
             patterns_detected.append("Bearish Kicker")
         
-        # Neutral patterns
         if doji and quality_neutral >= min_quality:
             patterns_detected.append("Doji")
         
-        # Pattern counters
         bullish_patterns = ["Hammer", "Inverted Hammer", "Morning Star", "Bullish Engulfing", 
                            "Bullish Harami", "Piercing Line", "Bullish Kicker"]
-        bearish_patterns = ["Hanging Man", "Shooting Star", "Evening Star", "Bearish Engulfing",
+        bearish_patterns_list = ["Hanging Man", "Shooting Star", "Evening Star", "Bearish Engulfing",
                            "Bearish Harami", "Dark Cloud", "Bearish Kicker"]
         
         bullish_count = sum(1 for p in patterns_detected if p in bullish_patterns)
-        bearish_count = sum(1 for p in patterns_detected if p in bearish_patterns)
+        bearish_count = sum(1 for p in patterns_detected if p in bearish_patterns_list)
         neutral_count = 1 if "Doji" in patterns_detected else 0
         
         return {
@@ -625,16 +533,14 @@ class Layer10CandleIntelligence:
         }
     
     def _detect_star_patterns(self, df: pd.DataFrame) -> Dict:
-        """
-        Morning Star and Evening Star pattern detection
-        Logic preserved exactly from MorningEvening_Star_PRO.txt
-        """
+        """Morning Star and Evening Star PRO detection - logic preserved from Pine Script"""
         if len(df) < 50:
             return {
-                "bullish_morning_star": False,
-                "bearish_evening_star": False,
-                "bullish_quality": 0,
-                "bearish_quality": 0
+                "bullish_morning_star": False, "bearish_evening_star": False,
+                "bullish_quality": 0, "bearish_quality": 0,
+                "bullish_high_quality": False, "bearish_high_quality": False,
+                "bullish_entry": 0, "bullish_stop": 0, "bullish_target1": 0, "bullish_target2": 0,
+                "bearish_entry": 0, "bearish_stop": 0, "bearish_target1": 0, "bearish_target2": 0
             }
         
         # Settings
@@ -662,42 +568,20 @@ class Layer10CandleIntelligence:
         candle3_low = df['low'].iloc[-1]
         
         # Helper functions
-        def check_volume():
-            avg_vol = df['volume'].rolling(window=20).mean().iloc[-1]
-            return df['volume'].iloc[-1] > (avg_vol * volume_multiplier)
+        avg_vol = df['volume'].rolling(window=20).mean().iloc[-1]
+        trend_ma = df['close'].rolling(window=trend_ma_length).mean().iloc[-1]
+        highest_level = df['high'].iloc[-lookback_bars:].max()
+        lowest_level = df['low'].iloc[-lookback_bars:].min()
         
-        def check_trend(is_bullish_pattern):
-            trend_ma = df['close'].rolling(window=trend_ma_length).mean().iloc[-1]
-            if is_bullish_pattern:
-                return df['close'].iloc[-1] < trend_ma
-            else:
-                return df['close'].iloc[-1] > trend_ma
+        bullish_volume_ok = df['volume'].iloc[-1] > (avg_vol * volume_multiplier)
+        bullish_trend_ok = df['close'].iloc[-1] < trend_ma
+        distance_to_support = (df['close'].iloc[-1] - lowest_level) / df['close'].iloc[-1]
+        bullish_sr_ok = distance_to_support < 0.02
         
-        def check_near_sr(is_bullish_pattern):
-            highest_level = df['high'].iloc[-lookback_bars:].max()
-            lowest_level = df['low'].iloc[-lookback_bars:].min()
-            
-            if is_bullish_pattern:
-                distance_to_support = (df['close'].iloc[-1] - lowest_level) / df['close'].iloc[-1]
-                return distance_to_support < 0.02
-            else:
-                distance_to_resistance = (highest_level - df['close'].iloc[-1]) / df['close'].iloc[-1]
-                return distance_to_resistance < 0.02
-        
-        def calc_quality_score(is_bullish, has_volume, has_trend, has_sr, body_proportion):
-            score = 0.0
-            score += 30.0  # Base
-            if has_volume:
-                score += 25.0
-            if has_trend:
-                score += 20.0
-            if has_sr:
-                score += 15.0
-            if body_proportion < 0.2:
-                score += 10.0
-            elif body_proportion < 0.3:
-                score += 5.0
-            return score
+        bearish_volume_ok = df['volume'].iloc[-1] > (avg_vol * volume_multiplier)
+        bearish_trend_ok = df['close'].iloc[-1] > trend_ma
+        distance_to_resistance = (highest_level - df['close'].iloc[-1]) / df['close'].iloc[-1]
+        bearish_sr_ok = distance_to_resistance < 0.02
         
         # BULLISH MORNING STAR
         bullish_candle1_body = candle1_open - candle1_close
@@ -714,13 +598,19 @@ class Layer10CandleIntelligence:
             (candle3_close > candle1_open)
         )
         
-        bullish_volume_ok = check_volume()
-        bullish_trend_ok = check_trend(True)
-        bullish_sr_ok = check_near_sr(True)
+        bullish_body_ratio = bullish_candle2_body / max(bullish_candle1_body, bullish_candle3_body) if max(bullish_candle1_body, bullish_candle3_body) > 0 else 1
         
-        bullish_body_ratio = bullish_candle2_body / max(bullish_candle1_body, bullish_candle3_body)
-        bullish_quality = calc_quality_score(True, bullish_volume_ok, bullish_trend_ok, 
-                                            bullish_sr_ok, bullish_body_ratio)
+        bullish_quality = 30.0
+        if bullish_volume_ok:
+            bullish_quality += 25.0
+        if bullish_trend_ok:
+            bullish_quality += 20.0
+        if bullish_sr_ok:
+            bullish_quality += 15.0
+        if bullish_body_ratio < 0.2:
+            bullish_quality += 10.0
+        elif bullish_body_ratio < 0.3:
+            bullish_quality += 5.0
         
         bullish_star = (bullish_pattern_base and bullish_volume_ok and 
                        bullish_trend_ok and bullish_sr_ok and 
@@ -741,13 +631,19 @@ class Layer10CandleIntelligence:
             (candle3_close < candle1_open)
         )
         
-        bearish_volume_ok = check_volume()
-        bearish_trend_ok = check_trend(False)
-        bearish_sr_ok = check_near_sr(False)
+        bearish_body_ratio = bearish_candle2_body / max(bearish_candle1_body, bearish_candle3_body) if max(bearish_candle1_body, bearish_candle3_body) > 0 else 1
         
-        bearish_body_ratio = bearish_candle2_body / max(bearish_candle1_body, bearish_candle3_body)
-        bearish_quality = calc_quality_score(False, bearish_volume_ok, bearish_trend_ok,
-                                            bearish_sr_ok, bearish_body_ratio)
+        bearish_quality = 30.0
+        if bearish_volume_ok:
+            bearish_quality += 25.0
+        if bearish_trend_ok:
+            bearish_quality += 20.0
+        if bearish_sr_ok:
+            bearish_quality += 15.0
+        if bearish_body_ratio < 0.2:
+            bearish_quality += 10.0
+        elif bearish_body_ratio < 0.3:
+            bearish_quality += 5.0
         
         bearish_star = (bearish_pattern_base and bearish_volume_ok and
                        bearish_trend_ok and bearish_sr_ok and
@@ -781,4 +677,35 @@ class Layer10CandleIntelligence:
             "bearish_stop": round(bearish_stop, 2),
             "bearish_target1": round(bearish_target1, 2),
             "bearish_target2": round(bearish_target2, 2)
+        }
+    
+    def _empty_result(self, reason: str) -> Dict:
+        """Return empty result structure"""
+        return {
+            "tws_detected": False, "tws_quality": 0, "tws_high_quality": False,
+            "tws_pattern_base": False, "tws_volume_strong": False, "tws_after_downtrend": False,
+            "tws_near_support": False, "tws_entry": 0, "tws_stop": 0, "tws_target1": 0, "tws_target2": 0,
+            "ib_detected": False, "ib_bullish_breakout": False, "ib_bearish_breakout": False,
+            "ib_quality": 0, "ib_mother_high": 0, "ib_mother_low": 0, "ib_inside_ratio_pct": 0,
+            "ib_bull_entry": 0, "ib_bull_stop": 0, "ib_bull_target1": 0, "ib_bull_target2": 0,
+            "ib_bear_entry": 0, "ib_bear_stop": 0, "ib_bear_target1": 0, "ib_bear_target2": 0,
+            "patterns_detected": [], "bullish_patterns": [], "bearish_patterns": [],
+            "bullish_pattern_count": 0, "bearish_pattern_count": 0, "neutral_pattern_count": 0,
+            "doji_detected": False, "hammer_detected": False, "inverted_hammer_detected": False,
+            "hanging_man_detected": False, "shooting_star_detected": False,
+            "morning_star_detected": False, "evening_star_detected": False,
+            "bullish_engulfing_detected": False, "bearish_engulfing_detected": False,
+            "bullish_harami_detected": False, "bearish_harami_detected": False,
+            "piercing_line_detected": False, "dark_cloud_detected": False,
+            "bullish_kicker_detected": False, "bearish_kicker_detected": False,
+            "patterns_bull_quality": 0, "patterns_bear_quality": 0,
+            "morning_star_pro_detected": False, "evening_star_pro_detected": False,
+            "morning_star_quality": 0, "evening_star_quality": 0,
+            "morning_star_high_quality": False, "evening_star_high_quality": False,
+            "morning_star_entry": 0, "morning_star_stop": 0, "morning_star_target1": 0, "morning_star_target2": 0,
+            "evening_star_entry": 0, "evening_star_stop": 0, "evening_star_target1": 0, "evening_star_target2": 0,
+            "total_bullish_patterns": 0, "total_bearish_patterns": 0, "total_patterns_detected": 0,
+            "current_candle_bullish": None, "current_candle_bearish": None,
+            "current_body_size": 0, "current_range": 0, "current_upper_wick": 0, "current_lower_wick": 0,
+            "avg_body": 0, "body_vs_avg_ratio": 0, "current_price": None, "error": reason
         }
