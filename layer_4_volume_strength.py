@@ -1,7 +1,7 @@
 """
-Layer 4: Volume Strength Engine
+Layer 4: Volume Strength Engine (Raw Data Output)
 Cumulative Volume Delta (CVD) and Ease of Movement (EOM)
-Converted from Pine Script - Logic unchanged
+Outputs RAW indicator values only - no scores, no signals
 """
 import pandas as pd
 import numpy as np
@@ -35,7 +35,7 @@ class Layer4VolumeStrength:
             df: DataFrame with OHLCV data
             
         Returns:
-            Dict with CVD and EOM metrics
+            Dict with RAW CVD and EOM values
         """
         if len(df) < self.cvd_cumulation_length:
             return self._empty_result("Insufficient data")
@@ -52,13 +52,39 @@ class Layer4VolumeStrength:
         # Calculate EOM
         eom_results = self._calculate_eom(df)
         
-        # Create summary
-        summary = self._create_summary(cvd_results, eom_results, df)
+        # Calculate volume context
+        volume_context = self._calculate_volume_context(df)
         
+        # Return RAW DATA ONLY - no scores, no signals
         return {
-            "cvd": cvd_results,
-            "eom": eom_results,
-            "summary": summary,
+            # CVD Data
+            "cvd": cvd_results["cvd"],
+            "cvd_prev": cvd_results["cvd_prev"],
+            "cumulative_buying_volume": cvd_results["cumulative_buying_volume"],
+            "cumulative_selling_volume": cvd_results["cumulative_selling_volume"],
+            "volume_strength_wave": cvd_results["volume_strength_wave"],
+            "ema_volume_strength_wave": cvd_results["ema_volume_strength_wave"],
+            "latest_buying_volume": cvd_results["latest_buying_volume"],
+            "latest_selling_volume": cvd_results["latest_selling_volume"],
+            "buying_volume_pct": cvd_results["buying_volume_pct"],
+            "selling_volume_pct": cvd_results["selling_volume_pct"],
+            
+            # EOM Data
+            "eom": eom_results["eom"],
+            "eom_prev": eom_results["eom_prev"],
+            "eom_hl2_change": eom_results["hl2_change"],
+            "eom_distance": eom_results["distance"],
+            
+            # Volume Context
+            "current_volume": volume_context["current_volume"],
+            "avg_volume_20": volume_context["avg_volume_20"],
+            "volume_ratio": volume_context["volume_ratio"],
+            "volume_change_5bar_pct": volume_context["volume_change_5bar_pct"],
+            
+            # Price Context
+            "current_price": round(df["close"].iloc[-1], 2),
+            
+            # Timestamp
             "timestamp": df.index[-1] if isinstance(df.index, pd.DatetimeIndex) else datetime.now()
         }
     
@@ -98,10 +124,6 @@ class Layer4VolumeStrength:
         percent_body_length = body_length / spread
         
         # Calculate buying and selling volume (EXACT Pine Script logic)
-        # Bullish candle (close > open): body + half wicks go to buying
-        # Bearish candle (close < open): body + half wicks go to selling
-        # The other side gets only half the wicks
-        
         buying_volume = np.where(
             close > open_,
             (percent_body_length + (percent_upper_wick + percent_lower_wick) / 2) * volume,
@@ -131,26 +153,22 @@ class Layer4VolumeStrength:
         # Calculate CVD (Cumulative Volume Delta)
         cumulative_volume_delta = cumulative_buying_volume - cumulative_selling_volume
         
-        # Determine bias
-        latest_cvd = cumulative_volume_delta[-1]
-        bias = "BULLISH" if latest_cvd > 0 else "BEARISH" if latest_cvd < 0 else "NEUTRAL"
-        
-        # Get fill color logic
-        fill_color = "GREEN" if cumulative_buying_volume[-1] > cumulative_selling_volume[-1] else \
-                     "RED" if cumulative_buying_volume[-1] < cumulative_selling_volume[-1] else \
-                     "YELLOW"
+        # Calculate buying/selling percentages
+        total_volume = cumulative_buying_volume[-1] + cumulative_selling_volume[-1]
+        buying_pct = (cumulative_buying_volume[-1] / total_volume * 100) if total_volume > 0 else 50
+        selling_pct = (cumulative_selling_volume[-1] / total_volume * 100) if total_volume > 0 else 50
         
         return {
-            "cumulative_buying_volume": float(cumulative_buying_volume[-1]),
-            "cumulative_selling_volume": float(cumulative_selling_volume[-1]),
-            "cvd": float(cumulative_volume_delta[-1]),
-            "volume_strength_wave": float(volume_strength_wave[-1]),
-            "ema_volume_strength_wave": float(ema_volume_strength_wave[-1]),
-            "bias": bias,
-            "fill_color": fill_color,
-            "cumulation_length": self.cvd_cumulation_length,
-            "latest_buying_volume": float(buying_volume[-1]),
-            "latest_selling_volume": float(selling_volume[-1])
+            "cumulative_buying_volume": round(float(cumulative_buying_volume[-1]), 2),
+            "cumulative_selling_volume": round(float(cumulative_selling_volume[-1]), 2),
+            "cvd": round(float(cumulative_volume_delta[-1]), 2),
+            "cvd_prev": round(float(cumulative_volume_delta[-2]), 2) if len(cumulative_volume_delta) > 1 else None,
+            "volume_strength_wave": round(float(volume_strength_wave[-1]), 2),
+            "ema_volume_strength_wave": round(float(ema_volume_strength_wave[-1]), 2),
+            "latest_buying_volume": round(float(buying_volume[-1]), 2),
+            "latest_selling_volume": round(float(selling_volume[-1]), 2),
+            "buying_volume_pct": round(buying_pct, 2),
+            "selling_volume_pct": round(selling_pct, 2)
         }
     
     # ==================== EASE OF MOVEMENT (EOM) ====================
@@ -161,12 +179,6 @@ class Layer4VolumeStrength:
         
         Pine Script Formula:
         eom = sma(divisor * change(hl2) * (high - low) / volume, length)
-        
-        Where:
-        - hl2 = (high + low) / 2
-        - change(hl2) = hl2[current] - hl2[previous]
-        - divisor = 10000 (default)
-        - length = 14 (default)
         """
         high = df['high'].values
         low = df['low'].values
@@ -176,7 +188,7 @@ class Layer4VolumeStrength:
         hl2 = (high + low) / 2
         
         # Calculate change in hl2
-        hl2_change = np.diff(hl2, prepend=hl2[0])  # First value has 0 change
+        hl2_change = np.diff(hl2, prepend=hl2[0])
         
         # Calculate distance moved (high - low)
         distance = high - low
@@ -185,34 +197,40 @@ class Layer4VolumeStrength:
         volume_safe = np.where(volume == 0, 0.0001, volume)
         
         # Calculate raw EOM values
-        # Formula: divisor * change(hl2) * (high - low) / volume
         raw_eom = self.eom_divisor * hl2_change * distance / volume_safe
         
         # Apply SMA smoothing
         eom_values = self._sma(raw_eom, self.eom_length)
         
-        # Current EOM value
-        current_eom = eom_values[-1]
+        return {
+            "eom": round(float(eom_values[-1]), 4),
+            "eom_prev": round(float(eom_values[-2]), 4) if len(eom_values) > 1 else None,
+            "hl2_change": round(float(hl2_change[-1]), 4),
+            "distance": round(float(distance[-1]), 4)
+        }
+    
+    # ==================== VOLUME CONTEXT ====================
+    
+    def _calculate_volume_context(self, df: pd.DataFrame) -> Dict:
+        """Calculate additional volume context"""
+        volume = df['volume']
         
-        # Determine state
-        if current_eom > 0:
-            state = "POSITIVE"
-            meaning = "Price rising easily (low volume needed)"
-        elif current_eom < 0:
-            state = "NEGATIVE"
-            meaning = "Price falling easily (low volume needed)"
-        else:
-            state = "NEUTRAL"
-            meaning = "No clear movement efficiency"
+        # Average volume
+        avg_volume_20 = volume.rolling(window=20).mean().iloc[-1]
+        current_volume = volume.iloc[-1]
+        
+        # Volume ratio (RVOL)
+        volume_ratio = current_volume / avg_volume_20 if avg_volume_20 > 0 else 1.0
+        
+        # Volume change over 5 bars
+        vol_5_ago = volume.iloc[-5] if len(volume) >= 5 else volume.iloc[0]
+        volume_change_5bar_pct = ((current_volume - vol_5_ago) / vol_5_ago * 100) if vol_5_ago > 0 else 0
         
         return {
-            "value": float(current_eom),
-            "state": state,
-            "meaning": meaning,
-            "length": self.eom_length,
-            "divisor": self.eom_divisor,
-            "latest_hl2_change": float(hl2_change[-1]),
-            "latest_distance": float(distance[-1])
+            "current_volume": round(float(current_volume), 0),
+            "avg_volume_20": round(float(avg_volume_20), 0),
+            "volume_ratio": round(float(volume_ratio), 2),
+            "volume_change_5bar_pct": round(float(volume_change_5bar_pct), 2)
         }
     
     # ==================== UTILITY FUNCTIONS ====================
@@ -234,105 +252,41 @@ class Layer4VolumeStrength:
     def _sma(self, series: np.ndarray, period: int) -> np.ndarray:
         """Calculate Simple Moving Average"""
         if len(series) < period:
-            # For first values, use expanding mean
             sma = np.zeros(len(series))
             for i in range(len(series)):
                 sma[i] = np.mean(series[:i+1])
             return sma
         
         sma = np.zeros(len(series))
-        
-        # First SMA value
         sma[:period-1] = np.nan
         sma[period-1] = np.mean(series[:period])
         
-        # Subsequent values
         for i in range(period, len(series)):
             sma[i] = np.mean(series[i-period+1:i+1])
         
         return sma
     
-    def _create_summary(self, cvd_results: Dict, eom_results: Dict, df: pd.DataFrame) -> Dict:
-        """Create summary of volume strength analysis"""
-        
-        # CVD Signal
-        cvd_value = cvd_results['cvd']
-        cvd_strength = abs(cvd_value)
-        
-        if cvd_results['bias'] == "BULLISH":
-            cvd_signal = "STRONG_BUY" if cvd_strength > cvd_results['cumulative_buying_volume'] * 0.2 else "BUY"
-        elif cvd_results['bias'] == "BEARISH":
-            cvd_signal = "STRONG_SELL" if cvd_strength > cvd_results['cumulative_selling_volume'] * 0.2 else "SELL"
-        else:
-            cvd_signal = "NEUTRAL"
-        
-        # EOM Signal
-        eom_value = eom_results['value']
-        if eom_value > 1000:
-            eom_signal = "STRONG_BUY"
-        elif eom_value > 0:
-            eom_signal = "BUY"
-        elif eom_value < -1000:
-            eom_signal = "STRONG_SELL"
-        elif eom_value < 0:
-            eom_signal = "SELL"
-        else:
-            eom_signal = "NEUTRAL"
-        
-        # Combined signal
-        signals = [cvd_signal, eom_signal]
-        buy_count = signals.count("STRONG_BUY") * 2 + signals.count("BUY")
-        sell_count = signals.count("STRONG_SELL") * 2 + signals.count("SELL")
-        
-        if buy_count > sell_count * 1.5:
-            overall_signal = "STRONG_BUY"
-        elif buy_count > sell_count:
-            overall_signal = "BUY"
-        elif sell_count > buy_count * 1.5:
-            overall_signal = "STRONG_SELL"
-        elif sell_count > buy_count:
-            overall_signal = "SELL"
-        else:
-            overall_signal = "NEUTRAL"
-        
-        # Calculate RVOL for context
-        avg_volume = df['volume'].rolling(window=20).mean().iloc[-1]
-        current_volume = df['volume'].iloc[-1]
-        rvol = current_volume / avg_volume if avg_volume > 0 else 1.0
-        
-        return {
-            "cvd_signal": cvd_signal,
-            "eom_signal": eom_signal,
-            "overall_signal": overall_signal,
-            "cvd_bias": cvd_results['bias'],
-            "eom_state": eom_results['state'],
-            "rvol": round(float(rvol), 2),
-            "volume_quality": "HIGH" if rvol >= 1.5 else "NORMAL" if rvol >= 1.0 else "LOW",
-            "buying_pressure": round((cvd_results['cumulative_buying_volume'] / 
-                                    (cvd_results['cumulative_buying_volume'] + 
-                                     cvd_results['cumulative_selling_volume'])) * 100, 2),
-            "confidence": min(100, int(abs(cvd_value) / 1000) + int(abs(eom_value) / 100))
-        }
-    
     def _empty_result(self, reason: str) -> Dict:
         """Return empty result structure"""
         return {
-            "cvd": {
-                "cumulative_buying_volume": 0,
-                "cumulative_selling_volume": 0,
-                "cvd": 0,
-                "volume_strength_wave": 0,
-                "ema_volume_strength_wave": 0,
-                "bias": "NEUTRAL"
-            },
-            "eom": {
-                "value": 0,
-                "state": "NEUTRAL",
-                "meaning": "No data"
-            },
-            "summary": {
-                "overall_signal": "NEUTRAL",
-                "confidence": 0
-            },
+            "cvd": None,
+            "cvd_prev": None,
+            "cumulative_buying_volume": None,
+            "cumulative_selling_volume": None,
+            "volume_strength_wave": None,
+            "ema_volume_strength_wave": None,
+            "latest_buying_volume": None,
+            "latest_selling_volume": None,
+            "buying_volume_pct": None,
+            "selling_volume_pct": None,
+            "eom": None,
+            "eom_prev": None,
+            "eom_hl2_change": None,
+            "eom_distance": None,
+            "current_volume": None,
+            "avg_volume_20": None,
+            "volume_ratio": None,
+            "volume_change_5bar_pct": None,
+            "current_price": None,
             "error": reason
         }
