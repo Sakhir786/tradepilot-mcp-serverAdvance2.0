@@ -1,7 +1,7 @@
 """
-Layer 12: VWAP Analysis Engine
+Layer 12: VWAP Analysis Engine (Raw Data Output)
 Anchored VWAP Trading System with Standard Deviation Bands
-Converted from Pine Script - Logic unchanged
+Outputs RAW VWAP data only - no signals
 """
 import pandas as pd
 import numpy as np
@@ -15,44 +15,42 @@ class Layer12VWAPAnalysis:
     Features:
     - Anchored VWAP (custom start date)
     - Standard deviation bands (±1σ, ±2σ)
-    - Volume filtering (>1.5x average)
+    - Volume filtering
     - Rejection counting (bounces at VWAP)
     - Zone acceptance tracking (upper/lower)
-    - VWAP slope bias (bullish/bearish)
-    - Mean reversion signals (at ±2SD)
-    - Breakout signals (acceptance + continuation)
+    - VWAP slope calculation
     """
     
     def __init__(self):
-        # ==================== Anchor Settings ====================
+        # Anchor Settings
         self.anchor_year = 2024
         self.anchor_month = 11
         self.anchor_day = 1
         
-        # ==================== Filter Settings ====================
-        self.min_volume_mult = 1.5  # Minimum volume multiple
-        self.min_rejections = 3  # Minimum rejections for strong level
-        self.min_acceptance_bars = 5  # Minimum bars for zone acceptance
-        self.vwap_touch_threshold = 0.003  # 0.3% threshold for VWAP touch
+        # Filter Settings
+        self.min_volume_mult = 1.5
+        self.min_rejections = 3
+        self.min_acceptance_bars = 5
+        self.vwap_touch_threshold = 0.003
         
-        # ==================== Slope Settings ====================
-        self.slope_lookback = 10  # Bars to calculate slope
-        self.vwap_slope_bull_threshold = 0.002  # 0.2% bullish threshold
-        self.vwap_slope_bear_threshold = -0.002  # -0.2% bearish threshold
+        # Slope Settings
+        self.slope_lookback = 10
+        self.vwap_slope_bull_threshold = 0.002
+        self.vwap_slope_bear_threshold = -0.002
         
-        # ==================== Other Settings ====================
-        self.volume_sma_period = 20  # Volume average period
-        self.rejection_min_gap_bars = 5  # Minimum bars between rejections
+        # Other Settings
+        self.volume_sma_period = 20
+        self.rejection_min_gap_bars = 5
         
-        # ==================== State Variables ====================
-        self.sum_pv = 0.0  # Cumulative price * volume
-        self.sum_v = 0.0  # Cumulative volume
-        self.sum_sq = 0.0  # Cumulative squared differences
-        self.bars = 0  # Bar count since anchor
-        self.rejection_count = 0  # Total rejections
-        self.last_rejection_bar = 0  # Last rejection bar index
-        self.current_zone = "NEUTRAL"  # Current zone
-        self.bars_in_zone = 0  # Bars in current zone
+        # State Variables
+        self.sum_pv = 0.0
+        self.sum_v = 0.0
+        self.sum_sq = 0.0
+        self.bars = 0
+        self.rejection_count = 0
+        self.last_rejection_bar = 0
+        self.current_zone = "NEUTRAL"
+        self.bars_in_zone = 0
         self.anchor_datetime = None
         
     def analyze(self, df: pd.DataFrame, anchor_date: Optional[Tuple[int, int, int]] = None) -> Dict:
@@ -64,24 +62,22 @@ class Layer12VWAPAnalysis:
             anchor_date: Optional (year, month, day) tuple to override default
             
         Returns:
-            Dict with VWAP levels, bands, signals, and statistics
+            Dict with RAW VWAP levels, bands, and statistics
         """
         if len(df) < 20:
             return self._empty_result("Insufficient data")
         
         df = df.copy()
         
-        # Set anchor date
         if anchor_date:
             self.anchor_year, self.anchor_month, self.anchor_day = anchor_date
         
-        # Reset state
         self._reset_state()
         
         # Calculate VWAP and bands
         vwap_data = self._calculate_vwap(df)
         
-        # Calculate volume filter
+        # Calculate volume data
         volume_data = self._calculate_volume_filter(df)
         
         # Calculate rejection count
@@ -93,29 +89,82 @@ class Layer12VWAPAnalysis:
         # Calculate VWAP slope
         slope_data = self._calculate_vwap_slope(vwap_data)
         
-        # Calculate position
+        # Calculate position relative to bands
         position_data = self._calculate_position(df, vwap_data)
         
-        # Generate trading signals
-        signals = self._generate_signals(df, vwap_data, volume_data, rejection_data, 
-                                         zone_data, slope_data, position_data)
+        # Calculate crossover data (raw facts)
+        crossover_data = self._calculate_crossovers(df, vwap_data)
         
+        current_price = df['close'].iloc[-1]
+        vwap_val = vwap_data['vwap'].iloc[-1] if len(vwap_data['vwap']) > 0 else None
+        
+        # Return RAW DATA ONLY - no signals
         return {
-            "vwap": vwap_data['vwap'].iloc[-1] if len(vwap_data['vwap']) > 0 else None,
-            "stdev": vwap_data['stdev'].iloc[-1] if len(vwap_data['stdev']) > 0 else None,
-            "bands": {
-                "upper_1sd": vwap_data['upper_1sd'].iloc[-1] if len(vwap_data['upper_1sd']) > 0 else None,
-                "lower_1sd": vwap_data['lower_1sd'].iloc[-1] if len(vwap_data['lower_1sd']) > 0 else None,
-                "upper_2sd": vwap_data['upper_2sd'].iloc[-1] if len(vwap_data['upper_2sd']) > 0 else None,
-                "lower_2sd": vwap_data['lower_2sd'].iloc[-1] if len(vwap_data['lower_2sd']) > 0 else None
-            },
-            "volume": volume_data,
+            # VWAP Core Data
+            "vwap": round(vwap_val, 2) if vwap_val and not pd.isna(vwap_val) else None,
+            "stdev": round(vwap_data['stdev'].iloc[-1], 4) if len(vwap_data['stdev']) > 0 and not pd.isna(vwap_data['stdev'].iloc[-1]) else None,
+            
+            # Band Levels
+            "upper_1sd": round(vwap_data['upper_1sd'].iloc[-1], 2) if len(vwap_data['upper_1sd']) > 0 and not pd.isna(vwap_data['upper_1sd'].iloc[-1]) else None,
+            "lower_1sd": round(vwap_data['lower_1sd'].iloc[-1], 2) if len(vwap_data['lower_1sd']) > 0 and not pd.isna(vwap_data['lower_1sd'].iloc[-1]) else None,
+            "upper_2sd": round(vwap_data['upper_2sd'].iloc[-1], 2) if len(vwap_data['upper_2sd']) > 0 and not pd.isna(vwap_data['upper_2sd'].iloc[-1]) else None,
+            "lower_2sd": round(vwap_data['lower_2sd'].iloc[-1], 2) if len(vwap_data['lower_2sd']) > 0 and not pd.isna(vwap_data['lower_2sd'].iloc[-1]) else None,
+            
+            # Price vs VWAP
+            "price_vs_vwap": round(current_price - vwap_val, 2) if vwap_val and not pd.isna(vwap_val) else None,
+            "price_vs_vwap_pct": round((current_price - vwap_val) / vwap_val * 100, 2) if vwap_val and not pd.isna(vwap_val) and vwap_val != 0 else None,
+            "price_above_vwap": current_price > vwap_val if vwap_val and not pd.isna(vwap_val) else None,
+            "price_below_vwap": current_price < vwap_val if vwap_val and not pd.isna(vwap_val) else None,
+            
+            # Position Data
+            "stdev_distance": round(position_data['stdev_distance'], 2),
+            "at_upper_1sd": position_data['stdev_distance'] >= 1.0,
+            "at_lower_1sd": position_data['stdev_distance'] <= -1.0,
+            "at_upper_2sd": position_data['at_upper_2sd'],
+            "at_lower_2sd": position_data['at_lower_2sd'],
+            "between_bands": -1.0 < position_data['stdev_distance'] < 1.0,
+            
+            # Volume Data
+            "current_volume": round(volume_data['current'], 0),
+            "avg_volume_20": round(volume_data['avg_20'], 0),
+            "volume_ratio": round(volume_data['current'] / volume_data['avg_20'], 2) if volume_data['avg_20'] > 0 else 1.0,
+            "is_high_volume": volume_data['is_high_volume'],
+            
+            # Rejection Data
             "rejection_count": rejection_data['count'],
             "is_strong_level": rejection_data['is_strong'],
-            "zone": zone_data,
-            "vwap_slope": slope_data,
-            "position": position_data,
-            "signals": signals,
+            
+            # Zone Data
+            "current_zone": zone_data['current'],
+            "bars_in_zone": zone_data['bars_in_zone'],
+            "accepted_above": zone_data['accepted_above'],
+            "accepted_below": zone_data['accepted_below'],
+            
+            # Slope Data
+            "vwap_slope": round(slope_data['value'], 6),
+            "vwap_slope_pct": round(slope_data['value'] * 100, 4),
+            "slope_above_bull_threshold": slope_data['bullish'],
+            "slope_below_bear_threshold": slope_data['bearish'],
+            "slope_neutral": not slope_data['bullish'] and not slope_data['bearish'],
+            
+            # Crossover Data (raw facts)
+            "crossed_above_vwap": crossover_data['crossed_above_vwap'],
+            "crossed_below_vwap": crossover_data['crossed_below_vwap'],
+            "crossed_above_lower_1sd": crossover_data['crossed_above_lower_1sd'],
+            "crossed_below_upper_1sd": crossover_data['crossed_below_upper_1sd'],
+            "crossed_above_upper_2sd": crossover_data['crossed_above_upper_2sd'],
+            "crossed_below_lower_2sd": crossover_data['crossed_below_lower_2sd'],
+            
+            # Distance to Bands
+            "distance_to_upper_1sd": round(vwap_data['upper_1sd'].iloc[-1] - current_price, 2) if len(vwap_data['upper_1sd']) > 0 and not pd.isna(vwap_data['upper_1sd'].iloc[-1]) else None,
+            "distance_to_lower_1sd": round(current_price - vwap_data['lower_1sd'].iloc[-1], 2) if len(vwap_data['lower_1sd']) > 0 and not pd.isna(vwap_data['lower_1sd'].iloc[-1]) else None,
+            "distance_to_upper_2sd": round(vwap_data['upper_2sd'].iloc[-1] - current_price, 2) if len(vwap_data['upper_2sd']) > 0 and not pd.isna(vwap_data['upper_2sd'].iloc[-1]) else None,
+            "distance_to_lower_2sd": round(current_price - vwap_data['lower_2sd'].iloc[-1], 2) if len(vwap_data['lower_2sd']) > 0 and not pd.isna(vwap_data['lower_2sd'].iloc[-1]) else None,
+            
+            # Price Context
+            "current_price": round(current_price, 2),
+            
+            # Timestamp
             "timestamp": df.index[-1] if isinstance(df.index, pd.DatetimeIndex) else datetime.now()
         }
     
@@ -136,54 +185,34 @@ class Layer12VWAPAnalysis:
     # ==================== VWAP CALCULATION ====================
     
     def _calculate_vwap(self, df: pd.DataFrame) -> Dict:
-        """
-        Calculate Anchored VWAP with standard deviation bands
-        
-        Formula (exact Pine Script):
-        hlc3 = (high + low + close) / 3
-        sum_pv = cumsum(hlc3 * volume) from anchor
-        sum_v = cumsum(volume) from anchor
-        vwap = sum_pv / sum_v
-        
-        variance = sum((hlc3 - vwap)^2) / bars
-        stdev = sqrt(variance)
-        """
+        """Calculate Anchored VWAP with standard deviation bands"""
         if not isinstance(df.index, pd.DatetimeIndex):
-            # Fallback: use all data
             anchor_idx = 0
         else:
-            # Find anchor date
             anchor_idx = df.index.searchsorted(self.anchor_datetime)
             if anchor_idx >= len(df):
                 anchor_idx = 0
         
-        # Calculate HLC3 (typical price)
         hlc3 = (df['high'] + df['low'] + df['close']) / 3
         
-        # Initialize arrays
         vwap_values = np.full(len(df), np.nan)
         stdev_values = np.full(len(df), np.nan)
         
-        # Calculate from anchor date forward
         for i in range(anchor_idx, len(df)):
             if i == anchor_idx:
-                # Reset on first bar
                 self.sum_pv = hlc3.iloc[i] * df['volume'].iloc[i]
                 self.sum_v = df['volume'].iloc[i]
                 self.sum_sq = 0.0
                 self.bars = 1
             else:
-                # Accumulate
                 self.sum_pv += hlc3.iloc[i] * df['volume'].iloc[i]
                 self.sum_v += df['volume'].iloc[i]
                 self.bars += 1
             
-            # Calculate VWAP
             if self.sum_v > 0:
                 vwap = self.sum_pv / self.sum_v
                 vwap_values[i] = vwap
                 
-                # Calculate variance
                 diff = hlc3.iloc[i] - vwap
                 
                 if i == anchor_idx:
@@ -196,11 +225,9 @@ class Layer12VWAPAnalysis:
                     stdev = np.sqrt(variance)
                     stdev_values[i] = stdev
         
-        # Create series
         vwap_series = pd.Series(vwap_values, index=df.index)
         stdev_series = pd.Series(stdev_values, index=df.index)
         
-        # Calculate bands
         upper_1sd = vwap_series + stdev_series
         lower_1sd = vwap_series - stdev_series
         upper_2sd = vwap_series + (2 * stdev_series)
@@ -218,13 +245,7 @@ class Layer12VWAPAnalysis:
     # ==================== VOLUME FILTER ====================
     
     def _calculate_volume_filter(self, df: pd.DataFrame) -> Dict:
-        """
-        Calculate volume filter
-        
-        Formula (exact Pine Script):
-        avg_volume = SMA(volume, 20)
-        is_high_volume = volume > avg_volume * 1.5
-        """
+        """Calculate volume filter"""
         avg_volume = df['volume'].rolling(window=self.volume_sma_period).mean()
         current_volume = df['volume'].iloc[-1]
         avg_volume_current = avg_volume.iloc[-1]
@@ -240,18 +261,7 @@ class Layer12VWAPAnalysis:
     # ==================== REJECTION COUNTING ====================
     
     def _calculate_rejections(self, df: pd.DataFrame, vwap_data: Dict) -> Dict:
-        """
-        Count rejections at VWAP level
-        
-        Formula (exact Pine Script):
-        distance_to_vwap = abs(close - vwap) / vwap
-        touching_vwap = distance_to_vwap < 0.003
-        
-        is_rejection = (high > vwap AND close < vwap) OR 
-                       (low < vwap AND close > vwap)
-        
-        If touching AND rejection AND gap > 5 bars: count++
-        """
+        """Count rejections at VWAP level"""
         vwap = vwap_data['vwap']
         rejection_count = 0
         last_rejection_bar = 0
@@ -265,15 +275,12 @@ class Layer12VWAPAnalysis:
             low = df['low'].iloc[i]
             vwap_val = vwap.iloc[i]
             
-            # Distance to VWAP
             distance = abs(close - vwap_val) / vwap_val if vwap_val != 0 else 0
             touching = distance < self.vwap_touch_threshold
             
-            # Rejection logic
             is_rejection = ((high > vwap_val and close < vwap_val) or 
                           (low < vwap_val and close > vwap_val))
             
-            # Count rejection if conditions met
             if touching and is_rejection and (i - last_rejection_bar) > self.rejection_min_gap_bars:
                 rejection_count += 1
                 last_rejection_bar = i
@@ -288,20 +295,7 @@ class Layer12VWAPAnalysis:
     # ==================== ZONE ACCEPTANCE ====================
     
     def _calculate_zone_acceptance(self, df: pd.DataFrame, vwap_data: Dict) -> Dict:
-        """
-        Calculate zone acceptance
-        
-        Formula (exact Pine Script):
-        If close > vwap + stdev:
-            zone = "UPPER", bars_in_zone++
-        Elif close < vwap - stdev:
-            zone = "LOWER", bars_in_zone++
-        Else:
-            zone = "NEUTRAL", bars_in_zone = 0
-        
-        accepted_above = zone == "UPPER" AND bars_in_zone >= 5
-        accepted_below = zone == "LOWER" AND bars_in_zone >= 5
-        """
+        """Calculate zone acceptance"""
         vwap = vwap_data['vwap']
         stdev = vwap_data['stdev']
         
@@ -316,7 +310,6 @@ class Layer12VWAPAnalysis:
             vwap_val = vwap.iloc[i]
             stdev_val = stdev.iloc[i]
             
-            # Determine zone
             if close > vwap_val + stdev_val:
                 if current_zone == "UPPER":
                     bars_in_zone += 1
@@ -346,14 +339,7 @@ class Layer12VWAPAnalysis:
     # ==================== VWAP SLOPE ====================
     
     def _calculate_vwap_slope(self, vwap_data: Dict) -> Dict:
-        """
-        Calculate VWAP slope bias
-        
-        Formula (exact Pine Script):
-        vwap_slope = (vwap - vwap[10]) / vwap[10]
-        vwap_bullish = vwap_slope > 0.002
-        vwap_bearish = vwap_slope < -0.002
-        """
+        """Calculate VWAP slope"""
         vwap = vwap_data['vwap']
         
         if len(vwap) < self.slope_lookback + 1:
@@ -383,14 +369,7 @@ class Layer12VWAPAnalysis:
     # ==================== POSITION CALCULATION ====================
     
     def _calculate_position(self, df: pd.DataFrame, vwap_data: Dict) -> Dict:
-        """
-        Calculate position relative to bands
-        
-        Formula (exact Pine Script):
-        stdev_distance = (close - vwap) / stdev
-        at_upper_2sd = stdev_distance >= 2.0
-        at_lower_2sd = stdev_distance <= -2.0
-        """
+        """Calculate position relative to bands"""
         close = df['close'].iloc[-1]
         vwap = vwap_data['vwap'].iloc[-1]
         stdev = vwap_data['stdev'].iloc[-1]
@@ -412,123 +391,74 @@ class Layer12VWAPAnalysis:
             'at_lower_2sd': bool(at_lower_2sd)
         }
     
-    # ==================== SIGNAL GENERATION ====================
+    # ==================== CROSSOVER CALCULATION ====================
     
-    def _generate_signals(self, df: pd.DataFrame, vwap_data: Dict, volume_data: Dict,
-                         rejection_data: Dict, zone_data: Dict, slope_data: Dict,
-                         position_data: Dict) -> Dict:
-        """
-        Generate trading signals
-        
-        Signals (exact Pine Script):
-        
-        Mean Reversion:
-        - long_setup = at_lower_2sd AND high_volume AND bullish_slope AND strong_level
-        - long_entry = long_setup AND crossover(close, vwap - stdev)
-        - short_setup = at_upper_2sd AND high_volume AND bearish_slope AND strong_level
-        - short_entry = short_setup AND crossunder(close, vwap + stdev)
-        
-        Breakout:
-        - breakout_long = accepted_above AND crossover(close, vwap + 2*stdev) AND high_volume
-        - breakout_short = accepted_below AND crossunder(close, vwap - 2*stdev) AND high_volume
-        """
+    def _calculate_crossovers(self, df: pd.DataFrame, vwap_data: Dict) -> Dict:
+        """Calculate crossover data - raw facts only"""
         if len(df) < 2:
-            return self._empty_signals()
+            return {
+                'crossed_above_vwap': False,
+                'crossed_below_vwap': False,
+                'crossed_above_lower_1sd': False,
+                'crossed_below_upper_1sd': False,
+                'crossed_above_upper_2sd': False,
+                'crossed_below_lower_2sd': False
+            }
         
-        # Current values
         close = df['close'].iloc[-1]
         close_prev = df['close'].iloc[-2]
         
         vwap = vwap_data['vwap'].iloc[-1]
+        vwap_prev = vwap_data['vwap'].iloc[-2]
         lower_1sd = vwap_data['lower_1sd'].iloc[-1]
+        lower_1sd_prev = vwap_data['lower_1sd'].iloc[-2]
         upper_1sd = vwap_data['upper_1sd'].iloc[-1]
+        upper_1sd_prev = vwap_data['upper_1sd'].iloc[-2]
         lower_2sd = vwap_data['lower_2sd'].iloc[-1]
+        lower_2sd_prev = vwap_data['lower_2sd'].iloc[-2]
         upper_2sd = vwap_data['upper_2sd'].iloc[-1]
+        upper_2sd_prev = vwap_data['upper_2sd'].iloc[-2]
         
-        # Crossover/crossunder detection
-        cross_above_lower_band = close > lower_1sd and close_prev <= lower_1sd
-        cross_below_upper_band = close < upper_1sd and close_prev >= upper_1sd
-        cross_above_upper_2sd = close > upper_2sd and close_prev <= upper_2sd
-        cross_below_lower_2sd = close < lower_2sd and close_prev >= lower_2sd
+        # Handle NaN values
+        def safe_cross_above(curr, prev, level_curr, level_prev):
+            if pd.isna(curr) or pd.isna(prev) or pd.isna(level_curr) or pd.isna(level_prev):
+                return False
+            return curr > level_curr and prev <= level_prev
         
-        # Mean reversion signals
-        long_setup = (position_data['at_lower_2sd'] and 
-                     volume_data['is_high_volume'] and 
-                     slope_data['bullish'] and 
-                     rejection_data['is_strong'])
-        
-        long_entry = long_setup and cross_above_lower_band
-        
-        short_setup = (position_data['at_upper_2sd'] and 
-                      volume_data['is_high_volume'] and 
-                      slope_data['bearish'] and 
-                      rejection_data['is_strong'])
-        
-        short_entry = short_setup and cross_below_upper_band
-        
-        # Breakout signals
-        breakout_long = (zone_data['accepted_above'] and 
-                        cross_above_upper_2sd and 
-                        volume_data['is_high_volume'])
-        
-        breakout_short = (zone_data['accepted_below'] and 
-                         cross_below_lower_2sd and 
-                         volume_data['is_high_volume'])
+        def safe_cross_below(curr, prev, level_curr, level_prev):
+            if pd.isna(curr) or pd.isna(prev) or pd.isna(level_curr) or pd.isna(level_prev):
+                return False
+            return curr < level_curr and prev >= level_prev
         
         return {
-            'long_setup': bool(long_setup),
-            'long_entry': bool(long_entry),
-            'short_setup': bool(short_setup),
-            'short_entry': bool(short_entry),
-            'breakout_long': bool(breakout_long),
-            'breakout_short': bool(breakout_short)
-        }
-    
-    def _empty_signals(self) -> Dict:
-        """Return empty signals"""
-        return {
-            'long_setup': False,
-            'long_entry': False,
-            'short_setup': False,
-            'short_entry': False,
-            'breakout_long': False,
-            'breakout_short': False
+            'crossed_above_vwap': safe_cross_above(close, close_prev, vwap, vwap_prev),
+            'crossed_below_vwap': safe_cross_below(close, close_prev, vwap, vwap_prev),
+            'crossed_above_lower_1sd': safe_cross_above(close, close_prev, lower_1sd, lower_1sd_prev),
+            'crossed_below_upper_1sd': safe_cross_below(close, close_prev, upper_1sd, upper_1sd_prev),
+            'crossed_above_upper_2sd': safe_cross_above(close, close_prev, upper_2sd, upper_2sd_prev),
+            'crossed_below_lower_2sd': safe_cross_below(close, close_prev, lower_2sd, lower_2sd_prev)
         }
     
     def _empty_result(self, reason: str) -> Dict:
         """Return empty result structure"""
         return {
-            "error": reason,
-            "vwap": None,
-            "stdev": None,
-            "bands": {
-                "upper_1sd": None,
-                "lower_1sd": None,
-                "upper_2sd": None,
-                "lower_2sd": None
-            },
-            "volume": {
-                "current": 0,
-                "avg_20": 0,
-                "is_high_volume": False
-            },
-            "rejection_count": 0,
-            "is_strong_level": False,
-            "zone": {
-                "current": "NEUTRAL",
-                "bars_in_zone": 0,
-                "accepted_above": False,
-                "accepted_below": False
-            },
-            "vwap_slope": {
-                "value": 0.0,
-                "bullish": False,
-                "bearish": False
-            },
-            "position": {
-                "stdev_distance": 0.0,
-                "at_upper_2sd": False,
-                "at_lower_2sd": False
-            },
-            "signals": self._empty_signals()
+            "vwap": None, "stdev": None,
+            "upper_1sd": None, "lower_1sd": None,
+            "upper_2sd": None, "lower_2sd": None,
+            "price_vs_vwap": None, "price_vs_vwap_pct": None,
+            "price_above_vwap": None, "price_below_vwap": None,
+            "stdev_distance": 0, "at_upper_1sd": False, "at_lower_1sd": False,
+            "at_upper_2sd": False, "at_lower_2sd": False, "between_bands": False,
+            "current_volume": 0, "avg_volume_20": 0, "volume_ratio": 1.0, "is_high_volume": False,
+            "rejection_count": 0, "is_strong_level": False,
+            "current_zone": "NEUTRAL", "bars_in_zone": 0,
+            "accepted_above": False, "accepted_below": False,
+            "vwap_slope": 0, "vwap_slope_pct": 0,
+            "slope_above_bull_threshold": False, "slope_below_bear_threshold": False, "slope_neutral": True,
+            "crossed_above_vwap": False, "crossed_below_vwap": False,
+            "crossed_above_lower_1sd": False, "crossed_below_upper_1sd": False,
+            "crossed_above_upper_2sd": False, "crossed_below_lower_2sd": False,
+            "distance_to_upper_1sd": None, "distance_to_lower_1sd": None,
+            "distance_to_upper_2sd": None, "distance_to_lower_2sd": None,
+            "current_price": None, "error": reason
         }
