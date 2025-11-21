@@ -1,7 +1,7 @@
 """
-Layer 14: IV Analysis Engine with AI Strategy Selector
-Complete IV system with intelligent strategy recommendations
-Converted from Pine Script + Enhanced AI Decision Making
+Layer 14: IV Analysis Engine (Raw Data Output)
+Complete IV system with HV, IV Rank, IV Percentile, Expected Move
+Outputs RAW IV data only - no signals or strategy recommendations
 """
 import pandas as pd
 import numpy as np
@@ -10,159 +10,147 @@ from datetime import datetime
 
 class Layer14IVAnalysis:
     """
-    Professional IV Analysis with AI-driven strategy selection.
+    Professional IV Analysis System.
     
     Components:
-    1. CORE: HV Calculation, IV Rank, IV Percentile, State Classification
-    2. POWER: Expected Move, Multi-Timeframe IV, Cross-Layer Integration
-    3. AI: Strategy Selector (SCALP/DAY/SWING/WEEK/MONTH/LEAPS)
-    4. AI: DTE Optimizer, Win Rate Estimator, Position Sizer
-    
-    Modes:
-    - CORE: Basic IV analysis only
-    - POWER: Full featured system
-    - CUSTOM: Pick and choose features
+    1. HV Calculation (Historical Volatility)
+    2. IV Rank (current position in 52-week range)
+    3. IV Percentile (% of days with lower IV)
+    4. Expected Move calculation
+    5. State thresholds (raw comparisons)
     """
     
-    def __init__(self, mode: str = "POWER"):
-        """
-        Initialize Layer 14 IV Analysis
-        
-        Args:
-            mode: "CORE", "POWER", or "CUSTOM"
-        """
-        self.mode = mode
-        
-        # ==================== CORE SETTINGS ====================
+    def __init__(self):
+        # Core Settings
         self.iv_length = 252  # 1 year lookback
         self.hv_window = 20  # HV calculation window
         self.smooth_length = 5  # IV smoothing
-        self.show_percentile = True
         
-        # Threshold levels
+        # Threshold levels (for raw comparison only)
         self.extreme_high_level = 80
         self.high_level = 60
         self.low_level = 40
         self.extreme_low_level = 20
         
-        # ==================== POWER SETTINGS ====================
-        self.enable_expected_move = mode == "POWER"
-        self.dte_input = 30  # Days to expiration
+        # Expected Move Settings
+        self.dte_options = [7, 14, 30, 45, 60]  # Multiple DTE calculations
         
-        self.enable_mtf = mode == "POWER"
-        self.mtf_timeframes = ['5min', '15min', '1h', 'D']
-        
-        self.enable_cross_layer = mode == "POWER"
-        
-        # ==================== AI STRATEGY SETTINGS ====================
-        self.enable_ai_strategy = mode == "POWER"
-        
-        # Strategy definitions
-        self.strategies = {
-            'SCALP': {'min_dte': 0, 'max_dte': 2, 'risk_level': 'HIGH'},
-            'DAY': {'min_dte': 0, 'max_dte': 1, 'risk_level': 'HIGH'},
-            'SWING': {'min_dte': 7, 'max_dte': 14, 'risk_level': 'MEDIUM'},
-            'WEEK': {'min_dte': 14, 'max_dte': 30, 'risk_level': 'MEDIUM'},
-            'MONTH': {'min_dte': 30, 'max_dte': 60, 'risk_level': 'LOW'},
-            'LEAPS': {'min_dte': 90, 'max_dte': 365, 'risk_level': 'LOW'}
-        }
-        
-    def analyze(self, df: pd.DataFrame, 
-                trend_quality: Optional[float] = None,
-                sr_confluence: Optional[float] = None,
-                vp_signal: Optional[bool] = None) -> Dict:
+    def analyze(self, df: pd.DataFrame, dte: int = 30) -> Dict:
         """
-        Complete IV analysis with AI strategy selection
+        Complete IV analysis
         
         Args:
             df: OHLCV DataFrame
-            trend_quality: Optional trend quality from Layer 5 (0-100)
-            sr_confluence: Optional S/R confluence from Layer 11 (0-100)
-            vp_signal: Optional VP signal from Layer 13 (bool)
+            dte: Days to expiration for expected move calc
             
         Returns:
-            Complete analysis with strategy recommendations
+            Dict with RAW IV analysis data
         """
         if len(df) < self.iv_length:
             return self._empty_result("Insufficient data")
         
         df = df.copy()
+        current_price = df['close'].iloc[-1]
         
-        # ==================== CORE ANALYSIS ====================
+        # Calculate HV
         hv_analysis = self._calculate_hv(df)
-        iv_rank = self._calculate_iv_rank(hv_analysis)
         
-        iv_percentile = None
-        if self.show_percentile:
-            iv_percentile = self._calculate_iv_percentile(hv_analysis)
+        # Calculate IV Rank
+        iv_rank_data = self._calculate_iv_rank(hv_analysis)
         
-        state = self._classify_state(iv_rank['value'])
-        alerts = self._check_alerts(df, iv_rank['value'])
+        # Calculate IV Percentile
+        iv_percentile_data = self._calculate_iv_percentile(hv_analysis)
         
-        # ==================== POWER ANALYSIS ====================
-        expected_move = None
-        if self.enable_expected_move:
-            expected_move = self._calculate_expected_move(
-                df['close'].iloc[-1], 
-                hv_analysis['smoothed']
-            )
+        # Calculate Expected Move for multiple DTEs
+        expected_moves = self._calculate_expected_moves(current_price, hv_analysis['smoothed'])
         
-        mtf_analysis = None
-        if self.enable_mtf:
-            mtf_analysis = self._analyze_mtf(df)
+        # Calculate expected move for specified DTE
+        expected_move_dte = self._calculate_expected_move(current_price, hv_analysis['smoothed'], dte)
         
-        cross_layer_hint = None
-        if self.enable_cross_layer:
-            cross_layer_hint = self._generate_cross_layer_hint(
-                iv_rank['value'],
-                trend_quality,
-                sr_confluence,
-                vp_signal
-            )
+        # Raw threshold comparisons
+        iv_rank = iv_rank_data['value']
         
-        # ==================== AI STRATEGY SELECTION ====================
-        strategy_recommendation = None
-        if self.enable_ai_strategy:
-            strategy_recommendation = self._select_optimal_strategy(
-                iv_rank=iv_rank['value'],
-                iv_state=state['state'],
-                hv_current=hv_analysis['smoothed'],
-                expected_move=expected_move,
-                mtf_analysis=mtf_analysis,
-                trend_quality=trend_quality,
-                sr_confluence=sr_confluence,
-                vp_signal=vp_signal,
-                current_price=df['close'].iloc[-1]
-            )
+        # HV trend analysis
+        hv_trend = self._analyze_hv_trend(hv_analysis)
         
+        # Return RAW DATA ONLY - no signals or recommendations
         return {
-            "mode": self.mode,
-            "core": {
-                "hv": hv_analysis,
-                "iv_rank": iv_rank,
-                "iv_percentile": iv_percentile,
-                "state": state,
-                "alerts": alerts
-            },
-            "power": {
-                "expected_move": expected_move,
-                "mtf": mtf_analysis,
-                "cross_layer_hint": cross_layer_hint
-            },
-            "strategy": strategy_recommendation,
+            # HV Data
+            "hv_current": round(hv_analysis['current'], 2) if hv_analysis['current'] else None,
+            "hv_smoothed": round(hv_analysis['smoothed'], 2) if hv_analysis['smoothed'] else None,
+            "hv_high_52w": round(hv_analysis['high_52w'], 2) if hv_analysis['high_52w'] else None,
+            "hv_low_52w": round(hv_analysis['low_52w'], 2) if hv_analysis['low_52w'] else None,
+            "hv_range_52w": round(hv_analysis['high_52w'] - hv_analysis['low_52w'], 2) if hv_analysis['high_52w'] and hv_analysis['low_52w'] else None,
+            
+            # IV Rank Data
+            "iv_rank": round(iv_rank, 2) if iv_rank else None,
+            "iv_rank_valid": iv_rank_data['valid'],
+            
+            # IV Percentile Data
+            "iv_percentile": round(iv_percentile_data['value'], 2) if iv_percentile_data['value'] else None,
+            "iv_percentile_valid": iv_percentile_data['valid'],
+            
+            # Threshold Comparisons (raw boolean facts)
+            "iv_above_extreme_high": iv_rank >= self.extreme_high_level if iv_rank else None,
+            "iv_above_high": iv_rank >= self.high_level if iv_rank else None,
+            "iv_below_low": iv_rank <= self.low_level if iv_rank else None,
+            "iv_below_extreme_low": iv_rank <= self.extreme_low_level if iv_rank else None,
+            "iv_in_normal_range": self.low_level < iv_rank < self.high_level if iv_rank else None,
+            
+            # State Classification (raw, no recommendation)
+            "iv_state": self._get_state_label(iv_rank),
+            
+            # Expected Move - Specified DTE
+            "em_dte": dte,
+            "em_1sd": round(expected_move_dte['1sd'], 2) if expected_move_dte else None,
+            "em_2sd": round(expected_move_dte['2sd'], 2) if expected_move_dte else None,
+            "em_1sd_pct": round(expected_move_dte['percent_1sd'], 2) if expected_move_dte else None,
+            "em_2sd_pct": round(expected_move_dte['percent_2sd'], 2) if expected_move_dte else None,
+            "em_upper_1sd": round(expected_move_dte['range_1sd']['upper'], 2) if expected_move_dte else None,
+            "em_lower_1sd": round(expected_move_dte['range_1sd']['lower'], 2) if expected_move_dte else None,
+            "em_upper_2sd": round(expected_move_dte['range_2sd']['upper'], 2) if expected_move_dte else None,
+            "em_lower_2sd": round(expected_move_dte['range_2sd']['lower'], 2) if expected_move_dte else None,
+            
+            # Expected Moves - Multiple DTEs
+            "em_7d_1sd_pct": round(expected_moves.get(7, {}).get('percent_1sd', 0), 2),
+            "em_14d_1sd_pct": round(expected_moves.get(14, {}).get('percent_1sd', 0), 2),
+            "em_30d_1sd_pct": round(expected_moves.get(30, {}).get('percent_1sd', 0), 2),
+            "em_45d_1sd_pct": round(expected_moves.get(45, {}).get('percent_1sd', 0), 2),
+            "em_60d_1sd_pct": round(expected_moves.get(60, {}).get('percent_1sd', 0), 2),
+            
+            # HV Trend Data
+            "hv_rising": hv_trend['rising'],
+            "hv_falling": hv_trend['falling'],
+            "hv_stable": hv_trend['stable'],
+            "hv_5d_change": round(hv_trend['change_5d'], 2) if hv_trend['change_5d'] else None,
+            "hv_10d_change": round(hv_trend['change_10d'], 2) if hv_trend['change_10d'] else None,
+            "hv_vs_avg": round(hv_trend['vs_avg'], 2) if hv_trend['vs_avg'] else None,
+            
+            # Threshold Levels (for reference)
+            "threshold_extreme_high": self.extreme_high_level,
+            "threshold_high": self.high_level,
+            "threshold_low": self.low_level,
+            "threshold_extreme_low": self.extreme_low_level,
+            
+            # Distance to Thresholds
+            "distance_to_extreme_high": round(self.extreme_high_level - iv_rank, 2) if iv_rank else None,
+            "distance_to_high": round(self.high_level - iv_rank, 2) if iv_rank else None,
+            "distance_to_low": round(iv_rank - self.low_level, 2) if iv_rank else None,
+            "distance_to_extreme_low": round(iv_rank - self.extreme_low_level, 2) if iv_rank else None,
+            
+            # Price Context
+            "current_price": round(current_price, 2),
+            
+            # Timestamp
             "timestamp": df.index[-1] if isinstance(df.index, pd.DatetimeIndex) else datetime.now()
         }
     
-    # ==================== CORE: HV CALCULATION ====================
+    # ==================== HV CALCULATION ====================
     
     def _calculate_hv(self, df: pd.DataFrame) -> Dict:
-        """
-        Calculate Historical Volatility (exact Pine Script logic)
-        
-        HV = stdDev(log_returns) * sqrt(252) * 100
-        """
+        """Calculate Historical Volatility"""
         if len(df) < self.hv_window:
-            return {'current': None, 'smoothed': None, 'high_52w': None, 'low_52w': None}
+            return {'current': None, 'smoothed': None, 'high_52w': None, 'low_52w': None, 'series': None}
         
         # Log returns
         log_returns = np.log(df['close'] / df['close'].shift(1))
@@ -175,6 +163,7 @@ class Layer14IVAnalysis:
         
         # Get 52-week high/low
         lookback_data = hv_smoothed.iloc[-self.iv_length:] if len(hv_smoothed) >= self.iv_length else hv_smoothed
+        lookback_data = lookback_data.dropna()
         
         return {
             'current': hv_series.iloc[-1] if not pd.isna(hv_series.iloc[-1]) else None,
@@ -184,14 +173,10 @@ class Layer14IVAnalysis:
             'series': hv_smoothed
         }
     
-    # ==================== CORE: IV RANK ====================
+    # ==================== IV RANK ====================
     
     def _calculate_iv_rank(self, hv_analysis: Dict) -> Dict:
-        """
-        Calculate IV Rank (exact Pine Script logic)
-        
-        IV Rank = ((current - low) / (high - low)) * 100
-        """
+        """Calculate IV Rank"""
         current = hv_analysis['smoothed']
         high_52w = hv_analysis['high_52w']
         low_52w = hv_analysis['low_52w']
@@ -209,29 +194,24 @@ class Layer14IVAnalysis:
             'valid': True
         }
     
-    # ==================== CORE: IV PERCENTILE ====================
+    # ==================== IV PERCENTILE ====================
     
     def _calculate_iv_percentile(self, hv_analysis: Dict) -> Dict:
-        """
-        Calculate IV Percentile (exact Pine Script logic)
-        
-        Percentile = (count of days with lower IV / total days) * 100
-        """
+        """Calculate IV Percentile"""
         hv_series = hv_analysis.get('series')
         current = hv_analysis['smoothed']
         
         if hv_series is None or current is None:
             return {'value': None, 'valid': False}
         
-        # Get last iv_length bars
         lookback_series = hv_series.iloc[-self.iv_length:] if len(hv_series) >= self.iv_length else hv_series
+        lookback_series = lookback_series.dropna()
         
-        # Count days where IV was lower than current
+        if len(lookback_series) == 0:
+            return {'value': None, 'valid': False}
+        
         count = (lookback_series < current).sum()
         total = len(lookback_series)
-        
-        if total == 0:
-            return {'value': None, 'valid': False}
         
         percentile = (count / total) * 100
         
@@ -240,92 +220,37 @@ class Layer14IVAnalysis:
             'valid': True
         }
     
-    # ==================== CORE: STATE CLASSIFICATION ====================
+    # ==================== STATE LABEL (raw, no recommendation) ====================
     
-    def _classify_state(self, iv_rank: float) -> Dict:
-        """
-        Classify IV state (exact Pine Script logic)
-        
-        5 states with recommendations
-        """
+    def _get_state_label(self, iv_rank: float) -> str:
+        """Get state label without recommendation"""
         if iv_rank is None:
-            return {'state': 'UNKNOWN', 'recommendation': 'NO DATA', 'color': 'GRAY'}
+            return "UNKNOWN"
         
         if iv_rank >= self.extreme_high_level:
-            return {
-                'state': 'EXTREME',
-                'recommendation': 'DONT BUY - SELL PREMIUM',
-                'color': 'RED',
-                'action': 'SELL'
-            }
+            return "EXTREME_HIGH"
         elif iv_rank >= self.high_level:
-            return {
-                'state': 'EXPENSIVE',
-                'recommendation': 'CAUTION - OPTIONS EXPENSIVE',
-                'color': 'ORANGE',
-                'action': 'CAUTION'
-            }
+            return "HIGH"
         elif iv_rank >= self.low_level:
-            return {
-                'state': 'NORMAL',
-                'recommendation': 'NEUTRAL - EVALUATE SETUP',
-                'color': 'YELLOW',
-                'action': 'NEUTRAL'
-            }
+            return "NORMAL"
         elif iv_rank >= self.extreme_low_level:
-            return {
-                'state': 'CHEAP',
-                'recommendation': 'GOOD - OPTIONS CHEAP',
-                'color': 'LIME',
-                'action': 'BUY'
-            }
+            return "LOW"
         else:
-            return {
-                'state': 'VERY CHEAP',
-                'recommendation': 'EXCELLENT - BUY OPTIONS',
-                'color': 'GREEN',
-                'action': 'BUY'
-            }
+            return "EXTREME_LOW"
     
-    # ==================== CORE: ALERTS ====================
+    # ==================== EXPECTED MOVE ====================
     
-    def _check_alerts(self, df: pd.DataFrame, current_iv_rank: float) -> Dict:
-        """Check alert conditions (exact Pine Script logic)"""
-        if len(df) < 2 or current_iv_rank is None:
-            return {
-                'extreme_high_cross': False,
-                'extreme_low_cross': False,
-                'enter_buy_zone': False,
-                'exit_buy_zone': False
-            }
-        
-        # Need previous IV rank (simplified - in production would maintain state)
-        prev_iv_rank = current_iv_rank  # Placeholder
-        
-        return {
-            'extreme_high_cross': prev_iv_rank <= self.extreme_high_level and current_iv_rank > self.extreme_high_level,
-            'extreme_low_cross': prev_iv_rank >= self.extreme_low_level and current_iv_rank < self.extreme_low_level,
-            'enter_buy_zone': prev_iv_rank >= self.low_level and current_iv_rank < self.low_level,
-            'exit_buy_zone': prev_iv_rank <= self.high_level and current_iv_rank > self.high_level
-        }
-    
-    # ==================== POWER: EXPECTED MOVE ====================
-    
-    def _calculate_expected_move(self, price: float, iv: float) -> Dict:
-        """
-        Calculate expected move (exact Pine Script logic)
-        
-        Expected Move = Price * (IV/100) * sqrt(DTE/365)
-        """
-        if iv is None or price is None:
+    def _calculate_expected_move(self, price: float, iv: float, dte: int) -> Dict:
+        """Calculate expected move for specified DTE"""
+        if iv is None or price is None or dte <= 0:
             return None
         
         # 1 Standard Deviation
-        expected_move_1sd = price * (iv / 100) * np.sqrt(self.dte_input / 365)
+        expected_move_1sd = price * (iv / 100) * np.sqrt(dte / 365)
         expected_move_2sd = expected_move_1sd * 2
         
         return {
-            'dte': self.dte_input,
+            'dte': dte,
             '1sd': expected_move_1sd,
             '2sd': expected_move_2sd,
             'range_1sd': {
@@ -340,319 +265,86 @@ class Layer14IVAnalysis:
             'percent_2sd': (expected_move_2sd / price) * 100
         }
     
-    # ==================== POWER: MTF ANALYSIS ====================
+    def _calculate_expected_moves(self, price: float, iv: float) -> Dict:
+        """Calculate expected moves for multiple DTEs"""
+        expected_moves = {}
+        
+        for dte in self.dte_options:
+            em = self._calculate_expected_move(price, iv, dte)
+            if em:
+                expected_moves[dte] = em
+        
+        return expected_moves
     
-    def _analyze_mtf(self, df: pd.DataFrame) -> Dict:
-        """
-        Multi-timeframe IV analysis (simplified for now)
-        
-        In production, would resample to different timeframes
-        """
-        # Placeholder - in production would calculate HV on different timeframes
-        # For now, return structure
-        
-        hv_analysis = self._calculate_hv(df)
-        current_rank = self._calculate_iv_rank(hv_analysis)['value']
-        
-        if current_rank is None:
-            return None
-        
-        # Simulate MTF (in production, resample df to each timeframe)
-        mtf_ranks = {
-            '5min': current_rank + np.random.uniform(-5, 5),
-            '15min': current_rank + np.random.uniform(-3, 3),
-            '1h': current_rank + np.random.uniform(-2, 2),
-            'D': current_rank
-        }
-        
-        # Check alignment
-        all_cheap = all(rank < self.low_level for rank in mtf_ranks.values())
-        all_expensive = all(rank > self.high_level for rank in mtf_ranks.values())
-        
-        alignment = "ALL_CHEAP" if all_cheap else "ALL_EXPENSIVE" if all_expensive else "MIXED"
-        
-        return {
-            'ranks': mtf_ranks,
-            'alignment': alignment,
-            'all_cheap': all_cheap,
-            'all_expensive': all_expensive
-        }
+    # ==================== HV TREND ANALYSIS ====================
     
-    # ==================== POWER: CROSS-LAYER HINTS ====================
-    
-    def _generate_cross_layer_hint(self, iv_rank: float, 
-                                   trend_quality: Optional[float],
-                                   sr_confluence: Optional[float],
-                                   vp_signal: Optional[bool]) -> str:
-        """Generate cross-layer integration hints"""
-        if iv_rank is None:
-            return "No data"
+    def _analyze_hv_trend(self, hv_analysis: Dict) -> Dict:
+        """Analyze HV trend"""
+        hv_series = hv_analysis.get('series')
         
-        if iv_rank < self.low_level:
-            return "✅ CHECK: Trend Quality (L5), S/R Confluence (L11), VP POC (L13)"
-        elif iv_rank > self.high_level:
-            return "⚠️ HIGH IV: Consider selling premium instead"
-        else:
-            return "Neutral IV - Standard analysis"
-    
-    # ==================== AI: STRATEGY SELECTION ====================
-    
-    def _select_optimal_strategy(self, iv_rank: float, iv_state: str,
-                                 hv_current: float, expected_move: Dict,
-                                 mtf_analysis: Dict, trend_quality: Optional[float],
-                                 sr_confluence: Optional[float], vp_signal: Optional[bool],
-                                 current_price: float) -> Dict:
-        """
-        AI-driven strategy selector
-        
-        Analyzes all factors to recommend optimal strategy
-        """
-        if iv_rank is None:
-            return None
-        
-        # Score each strategy
-        strategy_scores = {}
-        
-        for strategy_name, strategy_def in self.strategies.items():
-            score = self._score_strategy(
-                strategy_name=strategy_name,
-                strategy_def=strategy_def,
-                iv_rank=iv_rank,
-                iv_state=iv_state,
-                hv_current=hv_current,
-                expected_move=expected_move,
-                mtf_analysis=mtf_analysis,
-                trend_quality=trend_quality,
-                sr_confluence=sr_confluence,
-                vp_signal=vp_signal
-            )
-            strategy_scores[strategy_name] = score
-        
-        # Find best strategy
-        best_strategy = max(strategy_scores, key=lambda k: strategy_scores[k]['total_score'])
-        best_score = strategy_scores[best_strategy]
-        
-        # Get alternatives (top 3)
-        sorted_strategies = sorted(strategy_scores.items(), 
-                                  key=lambda x: x[1]['total_score'], 
-                                  reverse=True)
-        alternatives = [
-            {
-                'strategy': name,
-                'score': scores['total_score'],
-                'optimal_dte': self._calculate_optimal_dte(name, iv_rank, hv_current),
-                'reason': scores['primary_reason']
+        if hv_series is None or len(hv_series) < 20:
+            return {
+                'rising': None, 'falling': None, 'stable': None,
+                'change_5d': None, 'change_10d': None, 'vs_avg': None
             }
-            for name, scores in sorted_strategies[1:4]
-        ]
         
-        # Calculate optimal DTE
-        optimal_dte = self._calculate_optimal_dte(best_strategy, iv_rank, hv_current)
+        current = hv_series.iloc[-1]
+        hv_5d_ago = hv_series.iloc[-5] if len(hv_series) >= 5 else None
+        hv_10d_ago = hv_series.iloc[-10] if len(hv_series) >= 10 else None
+        hv_avg_20 = hv_series.iloc[-20:].mean() if len(hv_series) >= 20 else None
         
-        # Estimate win rate
-        win_rate = self._estimate_win_rate(
-            best_strategy, 
-            best_score['total_score'],
-            trend_quality,
-            sr_confluence,
-            vp_signal
-        )
+        # Calculate changes
+        change_5d = None
+        change_10d = None
         
-        # Calculate position size
-        position_size = self._calculate_position_size(
-            best_strategy,
-            best_score['total_score'],
-            iv_rank,
-            self.strategies[best_strategy]['risk_level']
-        )
+        if hv_5d_ago and not pd.isna(hv_5d_ago) and hv_5d_ago != 0:
+            change_5d = ((current - hv_5d_ago) / hv_5d_ago) * 100
         
-        return {
-            'primary_strategy': best_strategy,
-            'optimal_dte': optimal_dte,
-            'confidence': best_score['total_score'],
-            'reason': best_score['primary_reason'],
-            'win_rate_estimate': win_rate,
-            'position_size_pct': position_size,
-            'risk_level': self.strategies[best_strategy]['risk_level'],
-            'alternatives': alternatives,
-            'all_scores': {k: v['total_score'] for k, v in strategy_scores.items()}
-        }
-    
-    def _score_strategy(self, strategy_name: str, strategy_def: Dict,
-                       iv_rank: float, iv_state: str, hv_current: float,
-                       expected_move: Dict, mtf_analysis: Dict,
-                       trend_quality: Optional[float], sr_confluence: Optional[float],
-                       vp_signal: Optional[bool]) -> Dict:
-        """Score a strategy based on current conditions"""
+        if hv_10d_ago and not pd.isna(hv_10d_ago) and hv_10d_ago != 0:
+            change_10d = ((current - hv_10d_ago) / hv_10d_ago) * 100
         
-        score = 0
-        reasons = []
+        # Calculate vs average
+        vs_avg = None
+        if hv_avg_20 and not pd.isna(hv_avg_20) and hv_avg_20 != 0:
+            vs_avg = ((current - hv_avg_20) / hv_avg_20) * 100
         
-        # Factor 1: IV State Match
-        if strategy_name in ['SCALP', 'DAY']:
-            # Short-term strategies prefer high volatility
-            if iv_rank > 60 or (hv_current and hv_current > 40):
-                score += 30
-                reasons.append("High volatility favors short-term plays")
-            else:
-                score += 10
-        elif strategy_name == 'LEAPS':
-            # LEAPS prefer low IV
-            if iv_rank < 30:
-                score += 40
-                reasons.append("Cheap long-term options")
-            else:
-                score += 5
-        else:  # SWING, WEEK, MONTH
-            # Medium-term prefer moderate IV
-            if 20 < iv_rank < 60:
-                score += 35
-                reasons.append("Balanced IV for medium-term trades")
-            else:
-                score += 15
-        
-        # Factor 2: Expected Move
-        if expected_move:
-            move_pct = expected_move['percent_1sd']
-            if strategy_name in ['SCALP', 'DAY'] and move_pct > 3:
-                score += 20
-                reasons.append("Large expected move suits scalping")
-            elif strategy_name in ['SWING', 'WEEK'] and 1 < move_pct < 5:
-                score += 25
-                reasons.append("Moderate move good for swings")
-            elif strategy_name == 'LEAPS' and move_pct < 2:
-                score += 15
-        
-        # Factor 3: MTF Alignment
-        if mtf_analysis:
-            if mtf_analysis['alignment'] == 'ALL_CHEAP' and strategy_name in ['SWING', 'WEEK', 'MONTH']:
-                score += 25
-                reasons.append("All timeframes cheap - good for buying")
-            elif mtf_analysis['alignment'] == 'ALL_EXPENSIVE' and strategy_name in ['SCALP', 'DAY']:
-                score += 15
-                reasons.append("High IV across timeframes")
-        
-        # Factor 4: Trend Quality
-        if trend_quality:
-            if trend_quality > 70 and strategy_name in ['SWING', 'WEEK', 'MONTH']:
-                score += 20
-                reasons.append("Strong trend favors directional plays")
-            elif trend_quality < 50 and strategy_name in ['SCALP', 'DAY']:
-                score += 10
-                reasons.append("Choppy market suits short-term")
-        
-        # Factor 5: S/R Confluence
-        if sr_confluence and sr_confluence > 70:
-            score += 15
-            reasons.append("Strong S/R levels present")
-        
-        # Factor 6: VP Signal
-        if vp_signal:
-            score += 10
-            reasons.append("Volume profile confirmation")
+        # Determine trend direction
+        rising = change_5d > 5 if change_5d else None
+        falling = change_5d < -5 if change_5d else None
+        stable = -5 <= change_5d <= 5 if change_5d else None
         
         return {
-            'total_score': min(score, 100),  # Cap at 100
-            'reasons': reasons,
-            'primary_reason': reasons[0] if reasons else "No specific advantage"
+            'rising': rising,
+            'falling': falling,
+            'stable': stable,
+            'change_5d': change_5d,
+            'change_10d': change_10d,
+            'vs_avg': vs_avg
         }
-    
-    def _calculate_optimal_dte(self, strategy: str, iv_rank: float, hv_current: float) -> int:
-        """Calculate optimal DTE for strategy"""
-        base_dte = {
-            'SCALP': 0,
-            'DAY': 1,
-            'SWING': 10,
-            'WEEK': 21,
-            'MONTH': 45,
-            'LEAPS': 180
-        }.get(strategy, 30)
-        
-        # Adjust based on IV
-        if iv_rank < 25:  # Very cheap
-            # Can go longer
-            adjustment = 1.2
-        elif iv_rank > 70:  # Very expensive
-            # Go shorter
-            adjustment = 0.8
-        else:
-            adjustment = 1.0
-        
-        return int(base_dte * adjustment)
-    
-    def _estimate_win_rate(self, strategy: str, confidence: float,
-                          trend_quality: Optional[float],
-                          sr_confluence: Optional[float],
-                          vp_signal: Optional[bool]) -> int:
-        """Estimate win rate based on strategy and conditions"""
-        
-        # Base win rates
-        base_rates = {
-            'SCALP': 60,
-            'DAY': 62,
-            'SWING': 70,
-            'WEEK': 72,
-            'MONTH': 68,
-            'LEAPS': 65
-        }
-        
-        base_rate = base_rates.get(strategy, 65)
-        
-        # Adjust for confidence
-        confidence_adjustment = (confidence - 50) * 0.3  # ±15% max
-        
-        # Adjust for other factors
-        trend_adjustment = (trend_quality - 50) * 0.2 if trend_quality else 0
-        sr_adjustment = (sr_confluence - 50) * 0.1 if sr_confluence else 0
-        vp_adjustment = 5 if vp_signal else 0
-        
-        final_rate = base_rate + confidence_adjustment + trend_adjustment + sr_adjustment + vp_adjustment
-        
-        return int(max(50, min(90, final_rate)))  # Clamp between 50-90%
-    
-    def _calculate_position_size(self, strategy: str, confidence: float,
-                                 iv_rank: float, risk_level: str) -> int:
-        """Calculate position size as % of allocation"""
-        
-        # Base sizes by risk level
-        base_sizes = {
-            'HIGH': 20,    # SCALP, DAY
-            'MEDIUM': 40,  # SWING, WEEK
-            'LOW': 30      # MONTH, LEAPS
-        }
-        
-        base_size = base_sizes.get(risk_level, 30)
-        
-        # Adjust for confidence
-        if confidence > 80:
-            multiplier = 1.5
-        elif confidence > 60:
-            multiplier = 1.2
-        else:
-            multiplier = 0.8
-        
-        # Adjust for IV
-        if iv_rank < 25:  # Very cheap - can size up
-            iv_multiplier = 1.3
-        elif iv_rank > 75:  # Very expensive - size down
-            iv_multiplier = 0.7
-        else:
-            iv_multiplier = 1.0
-        
-        final_size = base_size * multiplier * iv_multiplier
-        
-        return int(max(10, min(60, final_size)))  # Clamp between 10-60%
     
     def _empty_result(self, reason: str) -> Dict:
         """Return empty result structure"""
         return {
-            "error": reason,
-            "mode": self.mode,
-            "core": {
-                "hv": None,
-                "iv_rank": {'value': None},
-                "state": {'state': 'UNKNOWN'}
-            },
-            "power": {},
-            "strategy": None
+            "hv_current": None, "hv_smoothed": None,
+            "hv_high_52w": None, "hv_low_52w": None, "hv_range_52w": None,
+            "iv_rank": None, "iv_rank_valid": False,
+            "iv_percentile": None, "iv_percentile_valid": False,
+            "iv_above_extreme_high": None, "iv_above_high": None,
+            "iv_below_low": None, "iv_below_extreme_low": None,
+            "iv_in_normal_range": None, "iv_state": "UNKNOWN",
+            "em_dte": None, "em_1sd": None, "em_2sd": None,
+            "em_1sd_pct": None, "em_2sd_pct": None,
+            "em_upper_1sd": None, "em_lower_1sd": None,
+            "em_upper_2sd": None, "em_lower_2sd": None,
+            "em_7d_1sd_pct": 0, "em_14d_1sd_pct": 0, "em_30d_1sd_pct": 0,
+            "em_45d_1sd_pct": 0, "em_60d_1sd_pct": 0,
+            "hv_rising": None, "hv_falling": None, "hv_stable": None,
+            "hv_5d_change": None, "hv_10d_change": None, "hv_vs_avg": None,
+            "threshold_extreme_high": self.extreme_high_level,
+            "threshold_high": self.high_level,
+            "threshold_low": self.low_level,
+            "threshold_extreme_low": self.extreme_low_level,
+            "distance_to_extreme_high": None, "distance_to_high": None,
+            "distance_to_low": None, "distance_to_extreme_low": None,
+            "current_price": None, "error": reason
         }
