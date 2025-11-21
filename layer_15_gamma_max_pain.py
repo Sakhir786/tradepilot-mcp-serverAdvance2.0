@@ -1,15 +1,7 @@
 """
-Layer 15: Gamma & Max Pain Analysis
+Layer 15: Gamma & Max Pain Analysis (Raw Data Output)
 Standalone module for options trading intelligence
-
-Calculates:
-- Max Pain: Strike where most options expire worthless
-- GEX (Gamma Exposure): Market maker hedging pressure
-- Pin Risk: Probability of price pinning at Max Pain
-- Proximity Score: Distance-based risk assessment
-
-Works with Polygon.io options chain data
-Can be used standalone or integrated into trading systems
+Outputs RAW gamma/max pain data only - no signals or recommendations
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -29,28 +21,24 @@ class Layer15GammaMaxPain:
     Gamma Exposure (GEX):
     - Positive GEX: MMs sell when price rises (suppresses volatility)
     - Negative GEX: MMs buy when price rises (amplifies moves)
-    
-    Pin Risk:
-    - High probability stock "pins" at Max Pain on expiry day
-    - Closer to Max Pain + closer to expiry = higher pin risk
     """
     
     def __init__(self):
         """Initialize Layer 15 Gamma & Max Pain analyzer"""
         
-        # Scoring thresholds (% distance from Max Pain)
-        self.safe_distance = 5.0       # >5% away = safe
-        self.caution_distance = 2.0    # 2-5% away = caution
-        self.danger_distance = 1.0     # 1-2% away = danger
-        self.extreme_danger = 0.5      # <0.5% away = extreme pin risk
+        # Distance thresholds (% from Max Pain)
+        self.safe_distance = 5.0
+        self.caution_distance = 2.0
+        self.danger_distance = 1.0
+        self.extreme_danger = 0.5
         
         # Days to expiration thresholds
-        self.expiry_week = 7           # Last week before expiry
-        self.expiry_day_hours = 24     # Last 24 hours
+        self.expiry_week = 7
+        self.expiry_day_hours = 24
         
-        # GEX regime thresholds
-        self.gex_threshold_high = 1000000    # Strong positive/negative
-        self.gex_threshold_medium = 100000   # Medium
+        # GEX thresholds
+        self.gex_threshold_high = 1000000
+        self.gex_threshold_medium = 100000
         
     def analyze(self, 
                 options_data: Dict, 
@@ -65,7 +53,7 @@ class Layer15GammaMaxPain:
             expiration_filter: Optional specific expiration date (YYYY-MM-DD)
             
         Returns:
-            Complete analysis with Max Pain, GEX, Pin Risk, Score
+            Dict with RAW Max Pain, GEX, Pin Risk data
         """
         
         # Validate input
@@ -97,41 +85,89 @@ class Layer15GammaMaxPain:
         # Calculate GEX
         gex_result = self._calculate_gex(expiry_data, current_price)
         
-        # Calculate Pin Risk
+        # Calculate Pin Risk metrics
         pin_risk_result = self._calculate_pin_risk(
             current_price,
             max_pain_result['max_pain'],
             nearest_expiry
         )
         
-        # Calculate Score
-        score_result = self._calculate_score(
-            pin_risk_result['distance_pct'],
-            pin_risk_result['days_to_expiry'],
-            gex_result['gex_regime']
-        )
-        
+        # Return RAW DATA ONLY - no signals or recommendations
         return {
             "success": True,
-            "timestamp": datetime.now().isoformat(),
+            
+            # Max Pain Data
+            "max_pain": max_pain_result['max_pain'],
+            "max_pain_total_loss": max_pain_result['total_loss_at_max_pain'],
+            "max_pain_confidence": max_pain_result['confidence'],
+            "strike_min": max_pain_result['strike_range']['min'] if max_pain_result.get('strike_range') else None,
+            "strike_max": max_pain_result['strike_range']['max'] if max_pain_result.get('strike_range') else None,
+            "total_call_oi": max_pain_result.get('total_call_oi', 0),
+            "total_put_oi": max_pain_result.get('total_put_oi', 0),
+            "total_oi": max_pain_result.get('total_call_oi', 0) + max_pain_result.get('total_put_oi', 0),
+            "put_call_oi_ratio": round(max_pain_result.get('total_put_oi', 0) / max_pain_result.get('total_call_oi', 1), 2) if max_pain_result.get('total_call_oi', 0) > 0 else None,
+            
+            # Price vs Max Pain
+            "price_vs_max_pain": round(current_price - max_pain_result['max_pain'], 2) if max_pain_result['max_pain'] else None,
+            "price_above_max_pain": current_price > max_pain_result['max_pain'] if max_pain_result['max_pain'] else None,
+            "price_below_max_pain": current_price < max_pain_result['max_pain'] if max_pain_result['max_pain'] else None,
+            "distance_to_max_pain": round(pin_risk_result['distance'], 2),
+            "distance_to_max_pain_pct": round(pin_risk_result['distance_pct'], 2),
+            
+            # Distance Threshold Comparisons (raw booleans)
+            "within_extreme_danger": pin_risk_result['distance_pct'] < self.extreme_danger,
+            "within_danger": pin_risk_result['distance_pct'] < self.danger_distance,
+            "within_caution": pin_risk_result['distance_pct'] < self.caution_distance,
+            "within_safe": pin_risk_result['distance_pct'] < self.safe_distance,
+            "beyond_safe": pin_risk_result['distance_pct'] >= self.safe_distance,
+            
+            # GEX Data
+            "gex_total": round(gex_result['gex_total'], 0),
+            "gex_call": round(gex_result['gex_call'], 0),
+            "gex_put": round(gex_result['gex_put'], 0),
+            "gex_regime": gex_result['gex_regime'],
+            "gamma_wall": gex_result['gamma_wall'],
+            
+            # GEX Regime Comparisons (raw booleans)
+            "gex_is_positive": gex_result['gex_total'] > 0,
+            "gex_is_negative": gex_result['gex_total'] < 0,
+            "gex_above_high_threshold": gex_result['gex_total'] > self.gex_threshold_high,
+            "gex_below_neg_high_threshold": gex_result['gex_total'] < -self.gex_threshold_high,
+            "gex_above_medium_threshold": gex_result['gex_total'] > self.gex_threshold_medium,
+            "gex_below_neg_medium_threshold": gex_result['gex_total'] < -self.gex_threshold_medium,
+            
+            # Expiration Data
             "expiration": nearest_expiry,
-            "current_price": current_price,
-            "max_pain": max_pain_result,
-            "gex": gex_result,
-            "pin_risk": pin_risk_result,
-            "score": score_result,
+            "days_to_expiry": pin_risk_result['days_to_expiry'],
+            "is_expiry_day": pin_risk_result['days_to_expiry'] == 0,
+            "is_expiry_week": pin_risk_result['days_to_expiry'] <= self.expiry_week,
+            "is_monthly": pin_risk_result['days_to_expiry'] > self.expiry_week,
+            
+            # Pin Probability (raw calculation)
+            "pin_probability_pct": pin_risk_result['pin_probability'],
+            
+            # Thresholds (for reference)
+            "threshold_extreme_danger_pct": self.extreme_danger,
+            "threshold_danger_pct": self.danger_distance,
+            "threshold_caution_pct": self.caution_distance,
+            "threshold_safe_pct": self.safe_distance,
+            "threshold_gex_high": self.gex_threshold_high,
+            "threshold_gex_medium": self.gex_threshold_medium,
+            
+            # Strikes Analyzed
             "strikes_analyzed": len(expiry_data),
-            "recommendation": self._generate_recommendation(score_result, pin_risk_result)
+            
+            # Price Context
+            "current_price": round(current_price, 2),
+            
+            # Timestamp
+            "timestamp": datetime.now().isoformat()
         }
     
     def analyze_all_expirations(self,
                                 options_data: Dict,
                                 current_price: float) -> Dict:
-        """
-        Analyze Max Pain for all available expirations
-        
-        Useful for seeing Max Pain term structure
-        """
+        """Analyze Max Pain for all available expirations"""
         if not options_data or "results" not in options_data:
             return {"error": "No options data"}
         
@@ -149,16 +185,18 @@ class Layer15GammaMaxPain:
             
             all_expirations[expiry_date] = {
                 "max_pain": max_pain['max_pain'],
-                "distance_pct": pin_risk['distance_pct'],
+                "distance_pct": round(pin_risk['distance_pct'], 2),
                 "days_to_expiry": pin_risk['days_to_expiry'],
-                "gex_total": gex['gex_total'],
-                "gex_regime": gex['gex_regime']
+                "gex_total": round(gex['gex_total'], 0),
+                "gex_regime": gex['gex_regime'],
+                "total_oi": max_pain.get('total_call_oi', 0) + max_pain.get('total_put_oi', 0)
             }
         
         return {
             "current_price": current_price,
             "expirations": all_expirations,
-            "nearest_expiry": self._get_nearest_expiration(parsed_data)
+            "nearest_expiry": self._get_nearest_expiration(parsed_data),
+            "expiration_count": len(all_expirations)
         }
     
     # ==================== DATA PARSING ====================
@@ -166,60 +204,35 @@ class Layer15GammaMaxPain:
     def _parse_polygon_data(self, 
                            results: List[Dict],
                            expiration_filter: Optional[str]) -> Dict:
-        """
-        Parse Polygon.io options chain data
-        
-        Returns:
-            Dictionary keyed by expiration date:
-            {
-                "2025-11-28": {
-                    580: {
-                        "call_oi": 5000,
-                        "put_oi": 3000,
-                        "call_gamma": 0.02,
-                        "put_gamma": 0.02,
-                        "call_delta": 0.55,
-                        "put_delta": -0.45
-                    }
-                }
-            }
-        """
+        """Parse Polygon.io options chain data"""
         parsed = {}
         
         for contract in results:
-            # Extract expiration date
             expiry = self._extract_expiration(contract)
             if not expiry:
                 continue
             
-            # Filter by expiration if specified
             if expiration_filter and expiry != expiration_filter:
                 continue
             
-            # Filter out expired contracts
             if not self._is_valid_expiration(expiry):
                 continue
             
-            # Extract strike price
             strike = self._extract_strike(contract)
             if strike is None:
                 continue
             
-            # Extract contract type
             contract_type = self._extract_contract_type(contract)
             if not contract_type:
                 continue
             
-            # Extract data
             oi = self._extract_open_interest(contract)
             gamma = self._extract_gamma(contract)
             delta = self._extract_delta(contract)
             
-            # Initialize expiration dict
             if expiry not in parsed:
                 parsed[expiry] = {}
             
-            # Initialize strike dict
             if strike not in parsed[expiry]:
                 parsed[expiry][strike] = {
                     "call_oi": 0,
@@ -230,12 +243,11 @@ class Layer15GammaMaxPain:
                     "put_delta": 0
                 }
             
-            # Populate data
             if contract_type == "call":
                 parsed[expiry][strike]["call_oi"] = oi
                 parsed[expiry][strike]["call_gamma"] = gamma
                 parsed[expiry][strike]["call_delta"] = delta
-            else:  # put
+            else:
                 parsed[expiry][strike]["put_oi"] = oi
                 parsed[expiry][strike]["put_gamma"] = gamma
                 parsed[expiry][strike]["put_delta"] = delta
@@ -244,7 +256,6 @@ class Layer15GammaMaxPain:
     
     def _extract_expiration(self, contract: Dict) -> Optional[str]:
         """Extract expiration date from contract"""
-        # Try different possible fields
         if "details" in contract and "expiration_date" in contract["details"]:
             return contract["details"]["expiration_date"]
         elif "expiration_date" in contract:
@@ -284,12 +295,11 @@ class Layer15GammaMaxPain:
         return 0.0
     
     def _is_valid_expiration(self, expiry_str: str) -> bool:
-        """Check if expiration is valid (not expired, within 2 years)"""
+        """Check if expiration is valid"""
         try:
             expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d").date()
             today = datetime.now().date()
-            max_date = today + timedelta(days=730)  # 2 years
-            
+            max_date = today + timedelta(days=730)
             return today <= expiry_date <= max_date
         except:
             return False
@@ -320,24 +330,15 @@ class Layer15GammaMaxPain:
     def _calculate_max_pain(self, 
                            expiry_data: Dict[float, Dict],
                            current_price: float) -> Dict:
-        """
-        Calculate Max Pain strike
-        
-        Max Pain = Strike where total loss for option holders is maximum
-        
-        Algorithm:
-        1. For each strike, calculate:
-           - Call loss = sum of (strike - X) * call_OI for all X < strike
-           - Put loss = sum of (X - strike) * put_OI for all X > strike
-           - Total loss = call_loss + put_loss
-        2. Strike with MINIMUM total loss = Max Pain
-        """
+        """Calculate Max Pain strike"""
         if not expiry_data:
             return {
                 "max_pain": current_price,
                 "total_loss_at_max_pain": 0,
                 "confidence": "LOW",
-                "reason": "No data"
+                "strike_range": None,
+                "total_call_oi": 0,
+                "total_put_oi": 0
             }
         
         strikes = sorted(expiry_data.keys())
@@ -347,24 +348,23 @@ class Layer15GammaMaxPain:
                 "max_pain": current_price,
                 "total_loss_at_max_pain": 0,
                 "confidence": "LOW",
-                "reason": "No strikes"
+                "strike_range": None,
+                "total_call_oi": 0,
+                "total_put_oi": 0
             }
         
         max_pain_strike = None
         min_total_loss = float('inf')
         loss_by_strike = {}
         
-        # Calculate total loss at each strike
         for test_strike in strikes:
             call_loss = 0.0
             put_loss = 0.0
             
             for strike, data in expiry_data.items():
-                # Call holders lose if strike > test_strike
                 if strike < test_strike:
                     call_loss += (test_strike - strike) * data["call_oi"] * 100
                 
-                # Put holders lose if strike < test_strike
                 if strike > test_strike:
                     put_loss += (strike - test_strike) * data["put_oi"] * 100
             
@@ -375,12 +375,14 @@ class Layer15GammaMaxPain:
                 min_total_loss = total_loss
                 max_pain_strike = test_strike
         
-        # Determine confidence
-        confidence = self._calculate_max_pain_confidence(
-            expiry_data,
-            max_pain_strike,
-            current_price
-        )
+        total_oi = sum(d["call_oi"] + d["put_oi"] for d in expiry_data.values())
+        
+        if total_oi < 1000:
+            confidence = "LOW"
+        elif total_oi < 10000:
+            confidence = "MEDIUM"
+        else:
+            confidence = "HIGH"
         
         return {
             "max_pain": max_pain_strike,
@@ -392,46 +394,20 @@ class Layer15GammaMaxPain:
             "total_put_oi": sum(d["put_oi"] for d in expiry_data.values())
         }
     
-    def _calculate_max_pain_confidence(self,
-                                       expiry_data: Dict,
-                                       max_pain_strike: float,
-                                       current_price: float) -> str:
-        """Calculate confidence in Max Pain calculation"""
-        
-        # Check open interest levels
-        total_oi = sum(d["call_oi"] + d["put_oi"] for d in expiry_data.values())
-        
-        if total_oi < 1000:
-            return "LOW"
-        elif total_oi < 10000:
-            return "MEDIUM"
-        else:
-            return "HIGH"
-    
     # ==================== GEX CALCULATION ====================
     
     def _calculate_gex(self,
                       expiry_data: Dict[float, Dict],
                       current_price: float) -> Dict:
-        """
-        Calculate Gamma Exposure (GEX)
-        
-        GEX = Sum of (Gamma * OI * 100 * Strike^2)
-        
-        Positive GEX: MMs are net short gamma
-        - When price rises, MMs sell stock to hedge (suppresses volatility)
-        - Price tends to be range-bound
-        
-        Negative GEX: MMs are net long gamma  
-        - When price rises, MMs buy stock to hedge (amplifies moves)
-        - Price tends to be more volatile
-        """
+        """Calculate Gamma Exposure (GEX)"""
         if not expiry_data:
             return {
                 "gex_total": 0,
+                "gex_call": 0,
+                "gex_put": 0,
                 "gex_by_strike": {},
                 "gex_regime": "NEUTRAL",
-                "interpretation": "No data"
+                "gamma_wall": None
             }
         
         gex_by_strike = {}
@@ -439,10 +415,7 @@ class Layer15GammaMaxPain:
         total_put_gex = 0
         
         for strike, data in expiry_data.items():
-            # Call GEX (positive - MMs short gamma)
             call_gex = data["call_gamma"] * data["call_oi"] * 100 * (strike ** 2)
-            
-            # Put GEX (negative - MMs long gamma)  
             put_gex = -1 * data["put_gamma"] * data["put_oi"] * 100 * (strike ** 2)
             
             strike_gex = call_gex + put_gex
@@ -453,10 +426,18 @@ class Layer15GammaMaxPain:
         
         total_gex = total_call_gex + total_put_gex
         
-        # Determine GEX regime
-        gex_regime = self._classify_gex_regime(total_gex)
+        # Classify GEX regime
+        if total_gex > self.gex_threshold_high:
+            gex_regime = "STRONG_POSITIVE"
+        elif total_gex > self.gex_threshold_medium:
+            gex_regime = "POSITIVE"
+        elif total_gex < -self.gex_threshold_high:
+            gex_regime = "STRONG_NEGATIVE"
+        elif total_gex < -self.gex_threshold_medium:
+            gex_regime = "NEGATIVE"
+        else:
+            gex_regime = "NEUTRAL"
         
-        # Find largest GEX strike (gamma wall)
         max_gex_strike = max(gex_by_strike.items(), key=lambda x: abs(x[1]))[0] if gex_by_strike else None
         
         return {
@@ -465,43 +446,8 @@ class Layer15GammaMaxPain:
             "gex_put": total_put_gex,
             "gex_by_strike": gex_by_strike,
             "gex_regime": gex_regime,
-            "gamma_wall": max_gex_strike,
-            "interpretation": self._interpret_gex(gex_regime, current_price, max_gex_strike)
+            "gamma_wall": max_gex_strike
         }
-    
-    def _classify_gex_regime(self, total_gex: float) -> str:
-        """Classify GEX regime"""
-        if total_gex > self.gex_threshold_high:
-            return "STRONG_POSITIVE"
-        elif total_gex > self.gex_threshold_medium:
-            return "POSITIVE"
-        elif total_gex < -self.gex_threshold_high:
-            return "STRONG_NEGATIVE"
-        elif total_gex < -self.gex_threshold_medium:
-            return "NEGATIVE"
-        else:
-            return "NEUTRAL"
-    
-    def _interpret_gex(self, 
-                      gex_regime: str,
-                      current_price: float,
-                      gamma_wall: Optional[float]) -> str:
-        """Interpret GEX regime for trading"""
-        interpretations = {
-            "STRONG_POSITIVE": "Strong suppression of volatility. Price likely to stay range-bound. MMs will sell rallies and buy dips.",
-            "POSITIVE": "Moderate suppression. Some resistance to large moves.",
-            "NEUTRAL": "Balanced. Price can move freely based on fundamentals.",
-            "NEGATIVE": "Moderate amplification. Expect larger-than-normal moves.",
-            "STRONG_NEGATIVE": "Strong amplification. Risk of explosive moves in either direction. MMs will chase price."
-        }
-        
-        base = interpretations.get(gex_regime, "Unknown regime")
-        
-        if gamma_wall:
-            wall_text = f" Gamma wall at ${gamma_wall:.2f} acts as magnetic level."
-            return base + wall_text
-        
-        return base
     
     # ==================== PIN RISK CALCULATION ====================
     
@@ -509,76 +455,19 @@ class Layer15GammaMaxPain:
                            current_price: float,
                            max_pain: float,
                            expiration_date: str) -> Dict:
-        """
-        Calculate Pin Risk
+        """Calculate Pin Risk metrics"""
         
-        Pin Risk = Probability price will "pin" at Max Pain on expiry
+        distance = abs(current_price - max_pain) if max_pain else 0
+        distance_pct = (distance / current_price) * 100 if current_price else 0
         
-        Factors:
-        1. Distance from Max Pain (closer = higher risk)
-        2. Days to expiration (closer = higher risk)
-        3. Open interest concentration (higher = higher risk)
-        """
-        
-        # Calculate distance
-        distance = abs(current_price - max_pain)
-        distance_pct = (distance / current_price) * 100
-        
-        # Calculate days to expiration
         try:
             expiry_date = datetime.strptime(expiration_date, "%Y-%m-%d").date()
             today = datetime.now().date()
             days_to_expiry = (expiry_date - today).days
         except:
-            days_to_expiry = 999  # Unknown
+            days_to_expiry = 999
         
-        # Classify pin risk
-        pin_risk_level = self._classify_pin_risk(distance_pct, days_to_expiry)
-        
-        # Calculate probability
-        pin_probability = self._calculate_pin_probability(distance_pct, days_to_expiry)
-        
-        return {
-            "distance": distance,
-            "distance_pct": distance_pct,
-            "days_to_expiry": days_to_expiry,
-            "pin_risk_level": pin_risk_level,
-            "pin_probability": pin_probability,
-            "warning": self._generate_pin_warning(pin_risk_level, days_to_expiry)
-        }
-    
-    def _classify_pin_risk(self, distance_pct: float, days_to_expiry: int) -> str:
-        """Classify pin risk level"""
-        
-        # Expiry day special case
-        if days_to_expiry == 0:
-            if distance_pct < self.extreme_danger:
-                return "EXTREME"
-            elif distance_pct < self.danger_distance:
-                return "HIGH"
-            else:
-                return "MODERATE"
-        
-        # Last week before expiry
-        elif days_to_expiry <= self.expiry_week:
-            if distance_pct < self.danger_distance:
-                return "HIGH"
-            elif distance_pct < self.caution_distance:
-                return "MODERATE"
-            else:
-                return "LOW"
-        
-        # More than a week out
-        else:
-            if distance_pct < self.caution_distance:
-                return "MODERATE"
-            else:
-                return "LOW"
-    
-    def _calculate_pin_probability(self, distance_pct: float, days_to_expiry: int) -> int:
-        """Calculate pin probability (0-100%)"""
-        
-        # Base probability from distance
+        # Calculate pin probability (raw calculation)
         if distance_pct < self.extreme_danger:
             base_prob = 90
         elif distance_pct < self.danger_distance:
@@ -590,7 +479,6 @@ class Layer15GammaMaxPain:
         else:
             base_prob = 10
         
-        # Adjust for days to expiry
         if days_to_expiry == 0:
             time_multiplier = 1.5
         elif days_to_expiry <= 3:
@@ -600,128 +488,62 @@ class Layer15GammaMaxPain:
         else:
             time_multiplier = 0.7
         
-        final_prob = min(100, int(base_prob * time_multiplier))
-        
-        return final_prob
-    
-    def _generate_pin_warning(self, pin_risk_level: str, days_to_expiry: int) -> str:
-        """Generate pin risk warning"""
-        if pin_risk_level == "EXTREME":
-            return f"⚠️ EXTREME PIN RISK - Price very close to Max Pain with {days_to_expiry} days left. Avoid weeklies!"
-        elif pin_risk_level == "HIGH":
-            return f"⚠️ HIGH PIN RISK - Price approaching Max Pain. {days_to_expiry} days to expiry."
-        elif pin_risk_level == "MODERATE":
-            return f"⚠️ MODERATE PIN RISK - Monitor Max Pain proximity. {days_to_expiry} days to expiry."
-        else:
-            return f"✅ LOW PIN RISK - Safe distance from Max Pain. {days_to_expiry} days to expiry."
-    
-    # ==================== SCORING ====================
-    
-    def _calculate_score(self,
-                        distance_pct: float,
-                        days_to_expiry: int,
-                        gex_regime: str) -> Dict:
-        """
-        Calculate 0-100 score based on Max Pain proximity and GEX
-        
-        Scoring:
-        - Far from Max Pain (>5%): 90-100 (safe)
-        - Moderate distance (2-5%): 60-80 (caution)
-        - Close to Max Pain (1-2%): 30-50 (danger)
-        - At Max Pain (<1%): 0-20 (extreme danger)
-        
-        Adjustments:
-        - Last week: -10 points
-        - Expiry day: -20 points
-        - Negative GEX: -10 points (more volatile)
-        """
-        
-        # Base score from distance
-        if distance_pct > self.safe_distance:
-            base_score = 95
-        elif distance_pct > self.caution_distance:
-            base_score = 70
-        elif distance_pct > self.danger_distance:
-            base_score = 40
-        elif distance_pct > self.extreme_danger:
-            base_score = 20
-        else:
-            base_score = 5
-        
-        # Time decay penalty
-        if days_to_expiry == 0:
-            time_penalty = -20
-        elif days_to_expiry <= 3:
-            time_penalty = -15
-        elif days_to_expiry <= 7:
-            time_penalty = -10
-        else:
-            time_penalty = 0
-        
-        # GEX adjustment
-        if "NEGATIVE" in gex_regime:
-            gex_penalty = -10
-        else:
-            gex_penalty = 0
-        
-        final_score = max(0, min(100, base_score + time_penalty + gex_penalty))
+        pin_probability = min(100, int(base_prob * time_multiplier))
         
         return {
-            "score": final_score,
-            "base_score": base_score,
-            "time_penalty": time_penalty,
-            "gex_penalty": gex_penalty,
-            "rating": self._score_to_rating(final_score)
+            "distance": distance,
+            "distance_pct": distance_pct,
+            "days_to_expiry": days_to_expiry,
+            "pin_probability": pin_probability
         }
-    
-    def _score_to_rating(self, score: int) -> str:
-        """Convert score to rating"""
-        if score >= 80:
-            return "EXCELLENT"
-        elif score >= 60:
-            return "GOOD"
-        elif score >= 40:
-            return "FAIR"
-        elif score >= 20:
-            return "POOR"
-        else:
-            return "DANGER"
-    
-    # ==================== RECOMMENDATION ====================
-    
-    def _generate_recommendation(self, 
-                                score_result: Dict,
-                                pin_risk_result: Dict) -> str:
-        """Generate trading recommendation"""
-        
-        score = score_result['score']
-        pin_risk = pin_risk_result['pin_risk_level']
-        days = pin_risk_result['days_to_expiry']
-        
-        if score >= 80:
-            return f"✅ SAFE - Far from Max Pain. Good for weekly options. {days} days to expiry."
-        
-        elif score >= 60:
-            return f"⚠️ CAUTION - Moderate distance from Max Pain. Consider longer DTE. {days} days to expiry."
-        
-        elif score >= 40:
-            return f"⚠️ WARNING - Close to Max Pain. Avoid weeklies, use monthlies. {days} days to expiry."
-        
-        elif score >= 20:
-            return f"🚨 DANGER - Very close to Max Pain with {days} days left. High pin risk!"
-        
-        else:
-            return f"🚨 EXTREME DANGER - At Max Pain on/near expiry! Avoid all directional options!"
     
     def _empty_result(self, reason: str, current_price: float) -> Dict:
         """Return empty result structure"""
         return {
             "success": False,
             "error": reason,
-            "current_price": current_price,
             "max_pain": None,
-            "gex": None,
-            "pin_risk": None,
-            "score": None,
-            "recommendation": f"Unable to calculate: {reason}"
+            "max_pain_total_loss": None,
+            "max_pain_confidence": None,
+            "strike_min": None,
+            "strike_max": None,
+            "total_call_oi": 0,
+            "total_put_oi": 0,
+            "total_oi": 0,
+            "put_call_oi_ratio": None,
+            "price_vs_max_pain": None,
+            "price_above_max_pain": None,
+            "price_below_max_pain": None,
+            "distance_to_max_pain": None,
+            "distance_to_max_pain_pct": None,
+            "within_extreme_danger": None,
+            "within_danger": None,
+            "within_caution": None,
+            "within_safe": None,
+            "beyond_safe": None,
+            "gex_total": 0,
+            "gex_call": 0,
+            "gex_put": 0,
+            "gex_regime": "UNKNOWN",
+            "gamma_wall": None,
+            "gex_is_positive": None,
+            "gex_is_negative": None,
+            "gex_above_high_threshold": None,
+            "gex_below_neg_high_threshold": None,
+            "gex_above_medium_threshold": None,
+            "gex_below_neg_medium_threshold": None,
+            "expiration": None,
+            "days_to_expiry": None,
+            "is_expiry_day": None,
+            "is_expiry_week": None,
+            "is_monthly": None,
+            "pin_probability_pct": None,
+            "threshold_extreme_danger_pct": self.extreme_danger,
+            "threshold_danger_pct": self.danger_distance,
+            "threshold_caution_pct": self.caution_distance,
+            "threshold_safe_pct": self.safe_distance,
+            "threshold_gex_high": self.gex_threshold_high,
+            "threshold_gex_medium": self.gex_threshold_medium,
+            "strikes_analyzed": 0,
+            "current_price": current_price
         }
