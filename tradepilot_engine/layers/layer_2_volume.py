@@ -1,6 +1,7 @@
 """
-Layer 2: Volume Engine
+Layer 2: Volume Engine (Raw Data Output)
 Combines OBV, A/D Line, and CMF with divergence detection
+Outputs RAW indicator values only - no scores, no signals
 """
 import pandas as pd
 import numpy as np
@@ -13,11 +14,18 @@ class Layer2Volume:
         self.obv_ma_length = 14
         self.ad_ma_length = 14
         self.cmf_length = 20
-        self.cmf_threshold = 0.05
         self.vol_sma_length = 20
     
     def analyze(self, df: pd.DataFrame) -> Dict:
-        """Run full volume analysis"""
+        """
+        Run full volume analysis
+        
+        Args:
+            df: OHLCV DataFrame with basic features
+            
+        Returns:
+            Dictionary with RAW volume indicator values
+        """
         df = df.copy()
         
         # Calculate OBV
@@ -42,31 +50,48 @@ class Layer2Volume:
         avg_vol = df["volume"].rolling(window=self.vol_sma_length).mean()
         vol_ratio = df["volume"].iloc[-1] / avg_vol.iloc[-1] if avg_vol.iloc[-1] > 0 else 1
         
-        # Calculate volume flow score
-        obv_strength = self._calculate_strength(obv_slope)
-        ad_strength = self._calculate_strength(ad_slope)
-        cmf_strength = cmf.iloc[-1] * 100 if not pd.isna(cmf.iloc[-1]) else 0
+        # Volume trend (5-bar comparison)
+        vol_5_ago = df["volume"].iloc[-5] if len(df) >= 5 else df["volume"].iloc[0]
+        vol_change_5 = ((df["volume"].iloc[-1] - vol_5_ago) / vol_5_ago * 100) if vol_5_ago > 0 else 0
         
-        volume_flow_score = (obv_strength + ad_strength + cmf_strength) / 3
+        # Price vs Volume divergence detection (raw)
+        price_slope = self._calculate_slope(df["close"], 5)
         
-        # Signal generation
-        signal = self._generate_signal(
-            volume_flow_score, obv_slope, ad_slope, cmf.iloc[-1]
-        )
-        
+        # Return RAW DATA ONLY - no scores, no signals
         return {
-            "volume_flow_score": round(volume_flow_score, 2),
+            # OBV Data
             "obv": round(obv.iloc[-1], 0),
+            "obv_ma": round(obv_ma.iloc[-1], 0),
+            "obv_prev": round(obv.iloc[-2], 0) if len(obv) > 1 else None,
             "obv_slope": round(obv_slope, 2),
-            "obv_trend": "RISING" if obv_slope > 0 else "FALLING",
+            "obv_vs_ma": round(obv.iloc[-1] - obv_ma.iloc[-1], 0),
+            
+            # A/D Line Data
             "ad_line": round(ad_line.iloc[-1], 0),
+            "ad_ma": round(ad_ma.iloc[-1], 0),
+            "ad_prev": round(ad_line.iloc[-2], 0) if len(ad_line) > 1 else None,
             "ad_slope": round(ad_slope, 2),
-            "ad_trend": "ACCUMULATION" if ad_slope > 0 else "DISTRIBUTION",
+            "ad_vs_ma": round(ad_line.iloc[-1] - ad_ma.iloc[-1], 0),
+            
+            # CMF Data
             "cmf": round(cmf.iloc[-1], 4),
-            "volume_ratio": round(vol_ratio, 2),
-            "avg_volume": round(avg_vol.iloc[-1], 0),
+            "cmf_prev": round(cmf.iloc[-2], 4) if len(cmf) > 1 else None,
+            
+            # Volume Data
             "current_volume": round(df["volume"].iloc[-1], 0),
-            "signal": signal
+            "avg_volume_20": round(avg_vol.iloc[-1], 0),
+            "volume_ratio": round(vol_ratio, 2),
+            "volume_change_5bar_pct": round(vol_change_5, 2),
+            
+            # Price Slope (for divergence context)
+            "price_slope": round(price_slope, 4),
+            
+            # Divergence Detection (raw boolean)
+            "price_rising_volume_falling": price_slope > 0 and obv_slope < 0,
+            "price_falling_volume_rising": price_slope < 0 and obv_slope > 0,
+            
+            # Current Price Context
+            "current_price": round(df["close"].iloc[-1], 2)
         }
     
     def _calculate_obv(self, df: pd.DataFrame) -> pd.Series:
@@ -99,21 +124,3 @@ class Layer2Volume:
         x = np.arange(len(recent))
         slope = np.polyfit(x, recent, 1)[0]
         return slope
-    
-    def _calculate_strength(self, slope: float) -> float:
-        """Convert slope to strength score"""
-        # Normalize slope to -100 to +100 range
-        return np.clip(slope / 100, -100, 100)
-    
-    def _generate_signal(self, flow_score: float, obv_slope: float, ad_slope: float, cmf: float) -> str:
-        """Generate trading signal"""
-        if flow_score > 50 and obv_slope > 0 and ad_slope > 0 and cmf > self.cmf_threshold:
-            return "STRONG_BUY"
-        elif flow_score > 20 and obv_slope > 0:
-            return "BUY"
-        elif flow_score < -50 and obv_slope < 0 and ad_slope < 0 and cmf < -self.cmf_threshold:
-            return "STRONG_SELL"
-        elif flow_score < -20 and obv_slope < 0:
-            return "SELL"
-        else:
-            return "NEUTRAL"

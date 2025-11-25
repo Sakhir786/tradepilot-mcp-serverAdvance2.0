@@ -32,3 +32,7 @@ scipy==1.11.4
 
 # Async support
 aiofiles==23.2.1
+
+# Integration System Dependencies (18-Layer)
+aiohttp==3.9.1
+orjson==3.9.10

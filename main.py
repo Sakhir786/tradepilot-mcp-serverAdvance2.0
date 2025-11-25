@@ -22,13 +22,21 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 
-# Import TradePilot Engine Router
-from engine_router import router as engine_router
+# Add 18-layer integration
+import sys
+sys.path.insert(0, './tradepilot_integration')
+
+try:
+    from integrations.router_18layer import router as engine18_router
+    ROUTER_18_AVAILABLE = True
+except ImportError as e:
+    print(f"[Main] 18-layer router not available: {e}")
+    ROUTER_18_AVAILABLE = False
 
 app = FastAPI(
     title="TradePilot MCP Server",
-    description="Multi-layer trading intelligence engine powered by Polygon.io",
-    version="2.0.0"
+    description="18-layer trading intelligence engine powered by Polygon.io",
+    version="3.0.0"
 )
 
 # Add CORS middleware
@@ -40,18 +48,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include TradePilot Engine routes
-app.include_router(engine_router)
+# Include 18-layer engine routes
+if ROUTER_18_AVAILABLE:
+    app.include_router(engine18_router)
+    print("✅ 18-Layer Engine integrated")
 
 # ---------------- Root ----------------
 @app.get("/")
 def root():
     return {
-        "message": "TradePilot MCP Server v2.0",
+        "message": "TradePilot MCP Server v3.0",
         "status": "running",
-        "engine": "10-layer technical analysis system",
+        "engine": "18-layer technical analysis system",
         "documentation": "/docs",
-        "engine_health": "/engine/health"
+        "health": "/engine18/health"
     }
 
 # ---------------- Core endpoints ----------------
@@ -192,6 +202,6 @@ async def sse():
 async def custom_openapi():
     return JSONResponse(get_openapi(
         title=app.title,
-        version="2.0.0",
+        version="3.0.0",
         routes=app.routes
     ))
