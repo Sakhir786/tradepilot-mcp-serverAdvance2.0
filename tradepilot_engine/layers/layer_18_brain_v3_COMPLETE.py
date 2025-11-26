@@ -256,7 +256,6 @@ class Layer18DataAggregator:
             "volatility_contracting": l8.get("volatility_contracting"),
             "is_above_p80": l8.get("is_above_p80"),
             "is_below_p20": l8.get("is_below_p20"),
-            "squeeze_on": l8.get("squeeze_on"),
         }
     
     def _extract_confirmations(self, layers: Dict) -> Dict[str, Any]:
