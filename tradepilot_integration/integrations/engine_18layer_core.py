@@ -27,8 +27,8 @@ import pandas as pd
 import numpy as np
 
 # Import path setup - adjust based on your deployment
-LAYERS_PATH = os.environ.get('TRADEPILOT_LAYERS_PATH', '/home/claude/layers/tradepilot-mcp-serverAdvance2.0-main')
-PRODUCTION_PATH = os.environ.get('TRADEPILOT_PRODUCTION_PATH', '/home/claude/production/tradepilot-mcp-server-main')
+LAYERS_PATH = os.environ.get('TRADEPILOT_LAYERS_PATH', '/home/mickey/tradepilot-mcp-server/tradepilot_engine/layers')
+PRODUCTION_PATH = os.environ.get('TRADEPILOT_PRODUCTION_PATH', '/home/mickey/tradepilot-mcp-server')
 
 sys.path.insert(0, LAYERS_PATH)
 sys.path.insert(0, PRODUCTION_PATH)

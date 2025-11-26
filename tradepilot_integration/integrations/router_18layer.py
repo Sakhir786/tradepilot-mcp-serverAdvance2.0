@@ -49,6 +49,41 @@ class OutputFormat(str, Enum):
     ai = "ai"
 
 
+
+def convert_numpy_types(obj):
+    """Convert numpy types to Python native types"""
+    import numpy as np
+    import math
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, (np.integer, int)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, float)):
+        val = float(obj)
+        if math.isnan(val) or math.isinf(val):
+            return None
+        return val
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: convert_numpy_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    return obj
+
+
+class NumpyJSONResponse(JSONResponse):
+    """Custom JSON response that handles numpy types"""
+    def render(self, content) -> bytes:
+        return json.dumps(
+            convert_numpy_types(content),
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+
 # Create router
 router = APIRouter(prefix="/engine18", tags=["TradePilot 18-Layer Engine"])
 
@@ -175,10 +210,10 @@ async def full_analysis(
         if output == OutputFormat.human:
             return {"text": engine.get_human_readable(result)}
         elif output == OutputFormat.ai:
-            return {
+            return convert_numpy_types({
                 "summary": engine.get_human_readable(result),
                 "data": engine.to_dict(result)
-            }
+            })
         else:
             return convert_numpy_types(engine.to_dict(result))
     
@@ -224,7 +259,7 @@ async def quick_signal(
             timeframe="day"
         )
         
-        return {
+        return convert_numpy_types({
             "ticker": symbol,
             "mode": mode.value,
             "timestamp": datetime.now().isoformat(),
@@ -242,7 +277,7 @@ async def quick_signal(
             },
             "playbook": result.matched_playbook,
             "quick_summary": f"{'🟢' if result.direction == 'BULLISH' else '🔴' if result.direction == 'BEARISH' else '⚪'} {result.action} | {result.confidence.value} ({result.win_probability:.0f}%)"
-        }
+        })
     
     except HTTPException:
         raise
@@ -318,7 +353,7 @@ async def scan_tickers(
         # Sort by win probability
         sorted_results = sorted(filtered, key=lambda x: x.get("win_probability", 0), reverse=True)
         
-        return {
+        return convert_numpy_types({
             "scan_time": datetime.now().isoformat(),
             "mode": mode.value,
             "min_confidence": min_confidence,
@@ -326,7 +361,7 @@ async def scan_tickers(
             "setups_found": len(sorted_results),
             "results": sorted_results,
             "all_results": results
-        }
+        })
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
@@ -353,7 +388,7 @@ async def compare_setups(
         
         for symbol in ticker_list:
             try:
-                candles_data = get_candles(symbol, tf="day", limit=300)
+                candles_data = get_candles(symbol, tf="day", limit=730)
                 options_data = None
                 try:
                     options_data = get_option_chain_snapshot(symbol, limit=50)
@@ -407,14 +442,14 @@ async def compare_setups(
         # Find best setup
         best_setup = valid_comparisons[0] if valid_comparisons else None
         
-        return {
+        return convert_numpy_types({
             "comparison_time": datetime.now().isoformat(),
             "mode": mode.value,
             "best_setup": best_setup["ticker"] if best_setup else None,
             "best_probability": best_setup["win_probability"] if best_setup else 0,
             "ranked_setups": valid_comparisons,
             "errors": [c for c in comparisons if "error" in c]
-        }
+        })
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
@@ -434,7 +469,7 @@ async def list_playbooks():
     - Required conditions
     - Expected win rate range
     """
-    return {
+    return convert_numpy_types({
         "total_playbooks": 14,
         "bullish_playbooks": [
             {
@@ -608,7 +643,7 @@ async def list_playbooks():
                 "best_for": "Intraday momentum plays"
             }
         ]
-    }
+    })
 
 
 @router.get("/layers")
@@ -618,7 +653,7 @@ async def list_layers():
     
     Complete breakdown of all analysis layers and their outputs.
     """
-    return {
+    return convert_numpy_types({
         "total_layers": 18,
         "categories": {
             "technical": {
@@ -658,7 +693,7 @@ async def list_layers():
             {"id": 17, "name": "Greeks Analysis", "outputs": ["Best strike selection", "Delta/Gamma/Theta/Vega analysis"]},
             {"id": 18, "name": "Master Brain", "outputs": ["Playbook matching", "Trade recommendation", "Risk management"]}
         ]
-    }
+    })
 
 
 @router.get("/layer/{layer_number}")
@@ -679,7 +714,7 @@ async def get_layer_analysis(
         engine = get_engine()
         symbol = symbol.upper()
         
-        candles_data = get_candles(symbol, tf=tf, limit=300)
+        candles_data = get_candles(symbol, tf=tf, limit=730)
         
         if not candles_data or "results" not in candles_data:
             raise HTTPException(status_code=400, detail=f"Unable to fetch data for {symbol}")
@@ -695,7 +730,7 @@ async def get_layer_analysis(
         layer_data = result.layer_results.get(layer_key)
         
         if layer_data:
-            return {
+            return convert_numpy_types({
                 "symbol": symbol,
                 "timeframe": tf,
                 "layer": layer_number,
@@ -703,7 +738,7 @@ async def get_layer_analysis(
                 "data": layer_data.data,
                 "error": layer_data.error,
                 "execution_time_ms": layer_data.execution_time_ms
-            }
+            })
         else:
             raise HTTPException(status_code=404, detail=f"Layer {layer_number} data not available")
     
@@ -726,7 +761,7 @@ async def engine_health():
         available_layers = list(engine._layers.keys())
         brain_available = engine._layer_18_brain is not None
         
-        return {
+        return convert_numpy_types({
             "status": "healthy",
             "engine": "TradePilot 18-Layer Engine",
             "version": "3.0",
@@ -738,14 +773,14 @@ async def engine_health():
             "brain_available": brain_available,
             "playbooks_count": 14,
             "configuration": engine.config
-        }
+        })
     
     except Exception as e:
-        return {
+        return convert_numpy_types({
             "status": "degraded",
             "error": str(e),
             "timestamp": datetime.now().isoformat()
-        }
+        })
 
 
 @router.get("/ai-prompt")
@@ -765,7 +800,7 @@ async def get_ai_prompt(
         
         trade_mode = TradeMode.SCALP if mode == TradeModeParam.scalp else TradeMode.SWING
         
-        candles_data = get_candles(symbol, tf="day", limit=300)
+        candles_data = get_candles(symbol, tf="day", limit=730)
         options_data = None
         try:
             options_data = get_option_chain_snapshot(symbol, limit=50)
@@ -814,11 +849,11 @@ async def get_ai_prompt(
 Available for detailed analysis in the `layer_data` field.
 """
             
-            return {
+            return convert_numpy_types({
                 "prompt": prompt,
                 "structured_data": engine.to_dict(result),
                 "usage_instructions": "Pass this prompt to Claude or GPT for detailed trading analysis. The structured_data contains all layer outputs for deep analysis."
-            }
+            })
         else:
             raise HTTPException(status_code=400, detail=f"Unable to analyze {symbol}")
     

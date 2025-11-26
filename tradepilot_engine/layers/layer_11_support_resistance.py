@@ -188,7 +188,7 @@ class Layer11SupportResistance:
         fractal_highs = []
         fractal_lows = []
         
-        for i in range(n, len(df) - n):
+        for i in range(n, len(df) - n - 5):
             # UP FRACTAL (Resistance)
             upflag_down_frontier = True
             upflag_up_frontier_0 = True
