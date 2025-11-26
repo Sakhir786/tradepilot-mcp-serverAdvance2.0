@@ -249,9 +249,9 @@ class Layer18DataAggregator:
         
         return {
             "atr": l5.get("atr"),
-            "atr_pct": l5.get("atr_pct"),
-            "volatility_regime": l8.get("volatility_regime"),
-            "volatility_percentile": l8.get("volatility_percentile"),
+            "atr_pct": l8.get("atrp"),
+            "volatility_regime": l8.get("percentile_bucket"),
+            "volatility_percentile": l8.get("percentile_rank"),
             "volatility_expanding": l8.get("volatility_expanding"),
             "volatility_contracting": l8.get("volatility_contracting"),
             "is_above_p80": l8.get("is_above_p80"),
