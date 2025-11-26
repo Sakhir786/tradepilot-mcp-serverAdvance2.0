@@ -26,6 +26,7 @@ from enum import Enum
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, "/home/mickey/tradepilot-mcp-server")
 
 from engine_18layer_core import (
     TradePilotEngine18Layer, 
@@ -125,6 +126,7 @@ try:
     from polygon_client import (
         get_candles, 
         get_option_chain_snapshot,
+        get_full_option_chain_snapshot,
         get_ticker_details
     )
 except ImportError:
@@ -193,7 +195,7 @@ async def full_analysis(
         options_data = None
         if include_options:
             try:
-                options_data = get_option_chain_snapshot(symbol, limit=100)
+                options_data = get_full_option_chain_snapshot(symbol, limit=100)
             except Exception as e:
                 print(f"[Router] Options fetch warning: {e}")
         
@@ -719,10 +721,19 @@ async def get_layer_analysis(
         if not candles_data or "results" not in candles_data:
             raise HTTPException(status_code=400, detail=f"Unable to fetch data for {symbol}")
         
+        # Fetch options data for layers 14-17
+        options_data = None
+        if layer_number >= 14 and layer_number <= 17:
+            try:
+                options_data = get_full_option_chain_snapshot(symbol, limit=100)
+            except:
+                pass
+        
         # Run full analysis to get layer data
         result = engine.analyze(
             ticker=symbol,
             candles_data=candles_data,
+            options_data=options_data,
             mode=TradeMode.SWING
         )
         
@@ -861,3 +872,30 @@ Available for detailed analysis in the `layer_data` field.
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI prompt generation failed: {str(e)}")
+
+
+@router.get("/strategies")
+async def get_strategies(
+    symbol: str = Query(..., description="Stock symbol (e.g., SPY, AAPL)"),
+    mode: str = Query("swing", description="Mode: scalp (0-2 DTE), swing (7-45 DTE), leaps (180-400 DTE)")
+):
+    """
+    🎯 Get All 6 Option Strategies
+    
+    Returns analysis + 6 best strategies for the given mode:
+    - Long Call
+    - Long Put  
+    - Bull Call Spread (debit)
+    - Bear Put Spread (debit)
+    - Bull Put Spread (credit)
+    - Bear Call Spread (credit)
+    """
+    import sys
+    sys.path.insert(0, "/home/mickey/tradepilot-mcp-server")
+    from polygon_client import analyze_with_strategies
+    
+    try:
+        result = analyze_with_strategies(symbol.upper(), mode.lower())
+        return convert_numpy_types(result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

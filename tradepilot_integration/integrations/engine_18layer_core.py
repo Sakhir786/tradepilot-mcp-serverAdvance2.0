@@ -464,7 +464,7 @@ class TradePilotEngine18Layer:
         # Layer 16: Put/Call Ratio
         try:
             if 'layer_16' in self._layers:
-                data = self._layers['layer_16'].analyze(options_data, current_price)
+                data = self._layers['layer_16'].analyze(options_data)
                 results['layer_16'] = LayerResult(
                     layer_name='layer_16', layer_number=16,
                     success=True, data=data
@@ -481,7 +481,7 @@ class TradePilotEngine18Layer:
         return results
     
     def _analyze_greeks(self, options_data: Dict, current_price: float) -> LayerResult:
-        """Analyze Greeks from options chain"""
+        """Analyze Greeks from options chain - ONLY recommends non-expired contracts"""
         try:
             if not options_data or 'results' not in options_data:
                 return LayerResult(
@@ -490,54 +490,80 @@ class TradePilotEngine18Layer:
                 )
             
             results = options_data['results']
+            today = datetime.now().date()
             
-            # Find best strike (closest to current price with good Greeks)
-            best_strike = current_price
-            best_delta = 0.50
-            best_dte = 30
-            
+            # Filter and score valid contracts
+            valid_contracts = []
             for contract in results:
                 details = contract.get('details', {})
                 greeks = contract.get('greeks', {})
                 
-                if details and greeks:
-                    strike = details.get('strike_price', 0)
-                    delta = abs(greeks.get('delta', 0))
+                if not details or not greeks:
+                    continue
+                
+                # Get expiration and check if NOT expired
+                exp_str = details.get('expiration_date')
+                if not exp_str:
+                    continue
                     
-                    # Prefer ATM strikes (delta ~0.50)
-                    if 0.45 <= delta <= 0.55:
-                        best_strike = strike
-                        best_delta = delta
-                        
-                        # Calculate DTE
-                        exp = details.get('expiration_date')
-                        if exp:
-                            try:
-                                exp_date = datetime.strptime(exp, '%Y-%m-%d')
-                                best_dte = (exp_date - datetime.now()).days
-                            except:
-                                pass
-                        break
+                try:
+                    exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
+                except:
+                    continue
+                
+                # CRITICAL: Skip expired contracts (must be at least 1 day out)
+                dte = (exp_date - today).days
+                if dte < 1:
+                    continue
+                
+                strike = details.get('strike_price', 0)
+                delta = abs(greeks.get('delta', 0))
+                contract_type = details.get('contract_type', 'call')
+                
+                # Score: prefer ATM (delta ~0.50) and reasonable DTE (7-45 days)
+                delta_score = 100 - abs(delta - 0.50) * 200  # Best at 0.50
+                dte_score = 100 if 7 <= dte <= 45 else 50 if dte < 7 else 70
+                
+                valid_contracts.append({
+                    'strike': strike,
+                    'delta': delta,
+                    'dte': dte,
+                    'exp_date': exp_str,
+                    'contract_type': contract_type,
+                    'score': delta_score + dte_score,
+                    'greeks': greeks
+                })
+            
+            # Sort by score and pick best
+            if not valid_contracts:
+                return LayerResult(
+                    layer_name='layer_17', layer_number=17,
+                    success=False, data={}, error="No valid non-expired contracts found"
+                )
+            
+            valid_contracts.sort(key=lambda x: x['score'], reverse=True)
+            best = valid_contracts[0]
             
             data = {
-                'best_strike': best_strike,
-                'best_delta': best_delta,
-                'best_dte': max(1, best_dte),
-                'best_strike_type': 'ATM' if abs(best_strike - current_price) / current_price < 0.01 else 'OTM',
+                'best_strike': best['strike'],
+                'best_delta': best['delta'],
+                'best_dte': best['dte'],
+                'best_expiry': best['exp_date'],
+                'best_contract_type': best['contract_type'],
+                'best_strike_type': 'ATM' if abs(best['strike'] - current_price) / current_price < 0.02 else ('ITM' if best['strike'] < current_price else 'OTM'),
+                'contracts_analyzed': len(valid_contracts),
                 'current_price': current_price
             }
-            
             return LayerResult(
                 layer_name='layer_17', layer_number=17,
                 success=True, data=data
             )
-            
         except Exception as e:
             return LayerResult(
                 layer_name='layer_17', layer_number=17,
                 success=False, data={}, error=str(e)
             )
-    
+
     def _placeholder_options_layers(self, current_price: float) -> Dict[str, LayerResult]:
         """Placeholder data when options data not available"""
         return {
