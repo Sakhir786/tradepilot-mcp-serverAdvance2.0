@@ -638,15 +638,15 @@ class TradePilotEngine18Layer:
                 from layer_18_brain_v3_COMPLETE import TradeMode as BrainMode
                 
                 brain_mode = BrainMode.SCALP if mode == TradeMode.SCALP else BrainMode.SWING
-                
                 recommendation = self._layer_18_brain.analyze(
                     ticker=ticker,
                     layer_results=layer_data,
                     current_price=current_price,
                     mode=brain_mode
                 )
+                result = self._layer_18_brain.to_dict(recommendation)
                 
-                return self._layer_18_brain.to_dict(recommendation)
+                return result
             else:
                 return self._fallback_brain_analysis(layer_data, current_price, mode)
                 
