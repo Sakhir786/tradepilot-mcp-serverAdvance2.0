@@ -24,7 +24,7 @@ class Layer3Divergence:
         self.macd_configs = {
             'tf1': {'fast': 12, 'slow': 26, 'label': '1h'},
             'tf2': {'fast': 48, 'slow': 104, 'label': '4h'},
-            'tf3': {'fast': 288, 'slow': 624, 'label': '1D'}
+            'tf3': {'fast': 72, 'slow': 156, 'label': '1D'}
         }
         
         # RSI Divergence Settings

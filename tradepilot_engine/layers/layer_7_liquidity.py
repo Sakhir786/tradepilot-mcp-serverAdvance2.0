@@ -556,10 +556,10 @@ class Layer7Liquidity:
             smooth_plus_dm[i] = (smooth_plus_dm[i-1] * (period - 1) + plus_dm[i]) / period
             smooth_minus_dm[i] = (smooth_minus_dm[i-1] * (period - 1) + minus_dm[i]) / period
         
-        plus_di = 100 * smooth_plus_dm / atr
-        minus_di = 100 * smooth_minus_dm / atr
+        plus_di = np.divide(100 * smooth_plus_dm, atr, out=np.zeros_like(atr), where=atr!=0)
+        minus_di = np.divide(100 * smooth_minus_dm, atr, out=np.zeros_like(atr), where=atr!=0)
         
-        dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+        dx = np.divide(100 * np.abs(plus_di - minus_di), (plus_di + minus_di), out=np.zeros_like(plus_di), where=(plus_di + minus_di)!=0)
         dx = np.nan_to_num(dx)
         
         adx = np.zeros(len(df))

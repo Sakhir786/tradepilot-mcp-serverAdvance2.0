@@ -90,32 +90,34 @@ class Layer18DataAggregator:
     
     def _extract_price_context(self, layers: Dict, current_price: float) -> Dict[str, Any]:
         l5 = layers.get("layer_5", {})
+        l6 = layers.get("layer_6", {})
         l12 = layers.get("layer_12", {})
         
         return {
             "current_price": current_price,
-            "trend_ema": l5.get("trend_ema"),
-            "price_vs_trend_ema": l5.get("price_vs_ema"),
-            "price_vs_trend_ema_pct": l5.get("price_vs_ema_pct"),
-            "above_trend_ema": l5.get("above_trend_ema"),
+            "trend_ema": l6.get("trend_ema"),
+            "price_vs_trend_ema": l6.get("price_vs_trend_ema"),
+            "price_vs_trend_ema_pct": l6.get("price_vs_trend_ema_pct"),
+            "above_trend_ema": l6.get("is_above_trend_ema"),
             "vwap": l12.get("vwap"),
             "price_vs_vwap": l12.get("price_vs_vwap"),
             "price_vs_vwap_pct": l12.get("price_vs_vwap_pct"),
             "above_vwap": l12.get("price_above_vwap"),
             "atr": l5.get("atr"),
-            "atr_pct": l5.get("atr_pct"),
+            "atr_pct": l5.get("atr_percent"),
         }
     
     def _extract_momentum(self, layers: Dict) -> Dict[str, Any]:
         l1 = layers.get("layer_1", {})
         l3 = layers.get("layer_3", {})
         l5 = layers.get("layer_5", {})
+        l6 = layers.get("layer_6", {})
         
         return {
             "rsi_14": l1.get("rsi_14"),
             "rsi_zone": self._get_rsi_zone(l1.get("rsi_14")),
             "macd_line": l1.get("macd_line"),
-            "macd_signal": l1.get("macd_signal"),
+            "macd_signal": l1.get("macd_signal_line"),
             "macd_histogram": l1.get("macd_histogram"),
             "macd_histogram_rising": l1.get("macd_histogram_rising"),
             "stoch_k": l1.get("stoch_k"),
@@ -132,16 +134,17 @@ class Layer18DataAggregator:
         l2 = layers.get("layer_2", {})
         l4 = layers.get("layer_4", {})
         l5 = layers.get("layer_5", {})
+        l6 = layers.get("layer_6", {})
         
         return {
             "volume_ratio": l2.get("volume_ratio"),
-            "volume_trend": l2.get("volume_trend"),
+            "volume_trend": "rising" if l2.get("obv_slope", 0) > 0 else "falling" if l2.get("obv_slope", 0) < 0 else "flat",
             "volume_interpretation": self._interpret_volume_ratio(l2.get("volume_ratio")),
             "obv": l2.get("obv"),
             "obv_slope": l2.get("obv_slope"),
             "obv_trend": "rising" if l2.get("obv_slope", 0) > 0 else "falling" if l2.get("obv_slope", 0) < 0 else "flat",
             "cvd": l4.get("cvd"),
-            "cvd_trend": l4.get("cvd_trend"),
+            "cvd_trend": "rising" if (l4.get("cvd", 0) or 0) > (l4.get("cvd_prev", 0) or 0) else "falling" if (l4.get("cvd", 0) or 0) < (l4.get("cvd_prev", 0) or 0) else "flat",
             "buying_volume_pct": l4.get("buying_volume_pct"),
             "selling_volume_pct": l4.get("selling_volume_pct"),
             "volume_pressure": "buying" if l4.get("buying_volume_pct", 50) > 55 else "selling" if l4.get("selling_volume_pct", 50) > 55 else "neutral",
@@ -177,7 +180,7 @@ class Layer18DataAggregator:
             # BOS
             "bos_bull_detected": l6.get("bos_bull_detected"),
             "bos_bear_detected": l6.get("bos_bear_detected"),
-            "current_bias": l6.get("current_bias"),
+            "current_bias": l6.get("current_trend"),
             # Order Blocks
             "ob_bull_detected": l6.get("ob_bull_detected"),
             "ob_bear_detected": l6.get("ob_bear_detected"),
@@ -196,8 +199,8 @@ class Layer18DataAggregator:
         
         return {
             "vwap": l12.get("vwap"),
-            "upper_band_1": l12.get("upper_band_1"),
-            "lower_band_1": l12.get("lower_band_1"),
+            "upper_band_1": l12.get("upper_1sd"),
+            "lower_band_1": l12.get("lower_1sd"),
             "price_vs_vwap_pct": l12.get("price_vs_vwap_pct"),
             "price_above_vwap": l12.get("price_above_vwap"),
             "crossed_above_vwap": l12.get("crossed_above_vwap"),
@@ -216,9 +219,9 @@ class Layer18DataAggregator:
             "distance_to_resistance_pct": l11.get("distance_to_resistance_pct"),
             "support_levels": l11.get("support_levels", []),
             "resistance_levels": l11.get("resistance_levels", []),
-            "poc": l13.get("poc"),
-            "value_area_high": l13.get("value_area_high"),
-            "value_area_low": l13.get("value_area_low"),
+            "poc": l13.get("poc_price"),
+            "value_area_high": l13.get("vah_price"),
+            "value_area_low": l13.get("val_price"),
             "in_value_area": l13.get("in_value_area"),
         }
     
@@ -229,7 +232,7 @@ class Layer18DataAggregator:
         l17 = layers.get("layer_17", {})
         
         return {
-            "iv_current": l14.get("iv_current"),
+            "iv_current": l14.get("hv_current"),
             "iv_rank": l14.get("iv_rank"),
             "iv_percentile": l14.get("iv_percentile"),
             "iv_interpretation": self._interpret_iv_rank(l14.get("iv_rank")),
@@ -237,7 +240,7 @@ class Layer18DataAggregator:
             "distance_to_max_pain_pct": l15.get("distance_to_max_pain_pct"),
             "pcr_current": l16.get("pcr_current"),
             "pcr_interpretation": self._interpret_pcr(l16.get("pcr_current")),
-            "total_gex": l15.get("total_gex"),
+            "total_gex": l15.get("gex_total"),
             "best_strike": l17.get("best_strike"),
             "best_delta": l17.get("best_delta"),
             "best_dte": l17.get("best_dte"),
@@ -246,6 +249,7 @@ class Layer18DataAggregator:
     def _extract_volatility(self, layers: Dict) -> Dict[str, Any]:
         l8 = layers.get("layer_8", {})
         l5 = layers.get("layer_5", {})
+        l6 = layers.get("layer_6", {})
         
         return {
             "atr": l5.get("atr"),
@@ -260,6 +264,7 @@ class Layer18DataAggregator:
     
     def _extract_confirmations(self, layers: Dict) -> Dict[str, Any]:
         l5 = layers.get("layer_5", {})
+        l6 = layers.get("layer_6", {})
         l9 = layers.get("layer_9", {})
         l10 = layers.get("layer_10", {})
         
