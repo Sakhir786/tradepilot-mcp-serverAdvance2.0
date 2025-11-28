@@ -40,6 +40,7 @@ class TradeMode(Enum):
     SCALP = "SCALP"      # 0-2 DTE, quick plays
     SWING = "SWING"      # 7-45 DTE, multi-day holds
     INTRADAY = "INTRADAY"  # Same day plays
+    LEAPS = "LEAPS"        # Long-term plays (180-720 DTE)
 
 
 class SignalStrength(Enum):

@@ -41,7 +41,6 @@ class TradeModeParam(str, Enum):
     scalp = "scalp"
     swing = "swing"
     intraday = "intraday"
-    leaps = "leaps"
 
 
 class OutputFormat(str, Enum):
@@ -125,7 +124,6 @@ def get_engine() -> TradePilotEngine18Layer:
 # Import polygon client from production (adjust path)
 try:
     from polygon_client import (
-    get_candles_for_mode,
         get_candles, 
         get_option_chain_snapshot,
         get_full_option_chain_snapshot,
@@ -170,21 +168,52 @@ async def full_analysis(
     try:
         engine = get_engine()
         symbol = symbol.upper()
-
-        # Convert mode - now includes LEAPS
+        
+        # Convert mode
         trade_mode = {
             TradeModeParam.scalp: TradeMode.SCALP,
             TradeModeParam.swing: TradeMode.SWING,
-            TradeModeParam.intraday: TradeMode.INTRADAY,
-            TradeModeParam.leaps: TradeMode.LEAPS
+            TradeModeParam.intraday: TradeMode.INTRADAY
         }.get(mode, TradeMode.SWING)
 
-        # Use mode-specific data fetching (5m/15m/daily/weekly based on mode)
-        candles_data = get_candles_for_mode(symbol, mode=mode.value)
+        # Auto-configure timeframe and limit based on mode if defaults used
+        if tf == "day" and limit == 730:  # User didnt override
+            if trade_mode == TradeMode.SCALP:
+                tf = "minute"  # 5-min candles
+                limit = 500    # ~6 days of intraday data
+            elif trade_mode == TradeMode.INTRADAY:
+                tf = "hour"
+                limit = 200    # ~8 days hourly
+            # SWING keeps day/730 defaults
 
-        # Extract timeframe from mode config for engine
-        mode_config = candles_data.get("_mode_config", {})
-        tf = f"{mode_config.get('multiplier', 1)}{mode_config.get('timespan', 'day')[0]}"
+        # Fetch candle data
+        }.get(mode, TradeMode.SWING)
+
+        # Auto-configure timeframe and limit based on mode if defaults used
+        if tf == "day" and limit == 730:  # User didnt override
+            if trade_mode == TradeMode.SCALP:
+                tf = "minute"  # 5-min candles
+                limit = 500    # ~6 days of intraday data
+            elif trade_mode == TradeMode.INTRADAY:
+                tf = "hour"
+                limit = 200    # ~8 days hourly
+            # SWING keeps day/730 defaults
+
+        # Fetch candle data
+        }.get(mode, TradeMode.SWING)
+
+        # Auto-configure timeframe and limit based on mode if defaults used
+        if tf == "day" and limit == 730:  # User didnt override
+            if trade_mode == TradeMode.SCALP:
+                tf = "minute"  # 5-min candles
+                limit = 500    # ~6 days of intraday data
+            elif trade_mode == TradeMode.INTRADAY:
+                tf = "hour"
+                limit = 200    # ~8 days hourly
+            # SWING keeps day/730 defaults
+
+        # Fetch candle data
+        candles_data = get_candles(symbol, tf=tf, limit=limit)
         
         if not candles_data or "results" not in candles_data:
             raise HTTPException(
