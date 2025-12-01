@@ -27,7 +27,7 @@ import sys
 sys.path.insert(0, './tradepilot_integration')
 
 try:
-    from integrations.router_18layer import router as engine18_router
+    from tradepilot_integration.router_18layer import router as engine18_router
     ROUTER_18_AVAILABLE = True
 except ImportError as e:
     print(f"[Main] 18-layer router not available: {e}")

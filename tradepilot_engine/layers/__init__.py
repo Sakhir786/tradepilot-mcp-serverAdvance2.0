@@ -26,7 +26,7 @@ from .layer_16_put_call_ratio import Layer16PutCallRatio
 # Layer 17: Greeks Analysis (JSON config, loaded at runtime by Layer 18)
 
 # Master Aggregator (Layer 18)
-from .layer_18_master_aggregator import (
+from .layer_18_brain_v3_COMPLETE import (
     Layer18MasterAggregator,
     MasterAggregatorResult,
     TradeMode,
