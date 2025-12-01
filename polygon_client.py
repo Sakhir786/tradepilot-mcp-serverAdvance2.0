@@ -21,7 +21,7 @@ MODE_DATA_CONFIG = {
     "intraday": {
         "multiplier": 15,
         "timespan": "minute",
-        "limit": 5000,
+        "limit": 50000,
         "lookback_days": 90,     # ~60 trading days
         "delay_minutes": 20,
         "dte_range": (0, 5),
