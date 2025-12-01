@@ -1,1 +1,0 @@
-"""TradePilot Integration Components"""
