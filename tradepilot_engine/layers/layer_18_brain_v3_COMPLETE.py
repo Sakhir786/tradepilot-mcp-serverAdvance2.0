@@ -1882,3 +1882,8 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("AI DECISION REQUIRED - Pure data output, no recommendations")
     print("=" * 80)
+
+# Backward compatibility aliases for __init__.py imports
+MasterAggregatorResult = dict  # Results are returned as dict
+Layer18BrainV3 = Layer18PureDataAggregator
+Layer18DataAggregator = Layer18PureDataAggregator
