@@ -297,23 +297,32 @@ async def quick_signal(
 @router.get("/scan")
 async def scan_tickers(
     symbols: str = Query(..., description="Comma-separated symbols (e.g., SPY,QQQ,AAPL)"),
-    mode: TradeModeParam = Query(TradeModeParam.swing, description="Trading mode")
+    mode: TradeModeParam = Query(TradeModeParam.swing, description="Trading mode"),
+    min_confidence: str = Query("MODERATE", description="Minimum confidence level")
 ):
     """
-    Multi-Ticker Scanner - PURE DATA OUTPUT
-    Returns key signals from all layers for each ticker.
-    NO filtering, NO playbook blocking - AI decides what to trade.
+    🔍 Multi-Ticker Scanner
+    
+    Scans multiple tickers and returns ranked results by win probability.
+    
+    Use for:
+    - Finding the best setups across watchlist
+    - Comparing multiple opportunities
+    - Daily scanning routine
     """
     try:
         engine = get_engine()
-        ticker_list = [s.strip().upper() for s in symbols.split(",")][:20]
+        ticker_list = [s.strip().upper() for s in symbols.split(",")][:20]  # Max 20 tickers
+        
         trade_mode = TradeMode.SCALP if mode == TradeModeParam.scalp else TradeMode.SWING
+        
         results = []
         
         for symbol in ticker_list:
             try:
-                candles_data = get_candles_for_mode(symbol, mode=mode.value)
-                if candles_data and "results" in candles_data and len(candles_data["results"]) >= 50:
+                candles_data = get_candles(symbol, tf="day", limit=200)
+                
+                if candles_data and "results" in candles_data and len(candles_data["results"]) >= 100:
                     result = engine.analyze(
                         ticker=symbol,
                         candles_data=candles_data,
@@ -321,62 +330,50 @@ async def scan_tickers(
                         mode=trade_mode
                     )
                     
-                    tech = result.technical_layers or {}
-                    layer1 = tech.get('layer_1', {})
-                    layer2 = tech.get('layer_2', {})
-                    layer5 = tech.get('layer_5', {})
-                    layer6 = tech.get('layer_6', {})
-                    opts = result.options_layers or {}
-                    layer14 = opts.get('layer_14', {})
-                    layer15 = opts.get('layer_15', {})
-                    layer16 = opts.get('layer_16', {})
-                    
                     results.append({
                         "ticker": symbol,
-                        "price": result.current_price,
-                        "layers_ok": result.layers_successful,
-                        "momentum": {
-                            "rsi_14": layer1.get('rsi_14'),
-                            "rsi_7": layer1.get('rsi_7'),
-                            "macd_hist": layer1.get('macd_histogram'),
-                            "macd_rising": layer1.get('macd_histogram_rising'),
-                            "stoch_k": layer1.get('stoch_k'),
-                            "cmf": layer1.get('cmf')
-                        },
-                        "volume": {
-                            "obv_slope": layer2.get('obv_slope'),
-                            "volume_ratio": layer2.get('volume_ratio')
-                        },
-                        "trend": {
-                            "supertrend": layer5.get('supertrend_direction'),
-                            "adx": layer5.get('adx'),
-                            "strength": layer5.get('trend_strength')
-                        },
-                        "structure": {
-                            "bias": layer6.get('current_bias'),
-                            "last_choch": layer6.get('last_choch_type'),
-                            "last_bos": layer6.get('last_bos_type')
-                        },
-                        "options": {
-                            "iv_rank": layer14.get('iv_rank'),
-                            "max_pain": layer15.get('max_pain'),
-                            "pcr": layer16.get('pcr_current')
-                        }
+                        "direction": result.direction,
+                        "action": result.action,
+                        "confidence": result.confidence.value,
+                        "win_probability": result.win_probability,
+                        "trade_valid": result.trade_valid,
+                        "playbook": result.matched_playbook,
+                        "strike": result.strike,
+                        "expiry_dte": result.expiry_dte
                     })
                 else:
-                    results.append({"ticker": symbol, "error": "Need 50+ candles"})
+                    results.append({
+                        "ticker": symbol,
+                        "error": "Insufficient data"
+                    })
+                    
             except Exception as e:
-                results.append({"ticker": symbol, "error": str(e)})
+                results.append({
+                    "ticker": symbol,
+                    "error": str(e)
+                })
+        
+        # Filter by minimum confidence
+        confidence_levels = ["SUPREME", "EXCELLENT", "STRONG", "MODERATE", "WEAK", "NO_TRADE"]
+        min_idx = confidence_levels.index(min_confidence.upper()) if min_confidence.upper() in confidence_levels else 3
+        
+        filtered = [r for r in results if r.get("confidence") and confidence_levels.index(r.get("confidence", "WEAK")) <= min_idx]
+        
+        # Sort by win probability
+        sorted_results = sorted(filtered, key=lambda x: x.get("win_probability", 0), reverse=True)
         
         return convert_numpy_types({
             "scan_time": datetime.now().isoformat(),
             "mode": mode.value,
-            "count": len(ticker_list),
-            "results": results
+            "min_confidence": min_confidence,
+            "tickers_scanned": len(ticker_list),
+            "setups_found": len(sorted_results),
+            "results": sorted_results,
+            "all_results": results
         })
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
-
 
 
 @router.get("/compare")
