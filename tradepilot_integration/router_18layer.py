@@ -349,13 +349,24 @@ async def scan_tickers(
                         },
                         "trend": {
                             "supertrend": layer5.get('supertrend_direction'),
+                            "supertrend_bullish": layer5.get('supertrend_bullish'),
                             "adx": layer5.get('adx'),
-                            "strength": layer5.get('trend_strength')
+                            "trending": layer5.get('trending'),
+                            "weak_trend": layer5.get('weak_trend'),
+                            "choppy": layer5.get('choppy'),
+                            "htf_aligned": layer5.get('htf_aligned')
                         },
                         "structure": {
-                            "bias": layer6.get('current_bias'),
-                            "last_choch": layer6.get('last_choch_type'),
-                            "last_bos": layer6.get('last_bos_type')
+                            "current_trend": layer6.get('current_trend'),
+                            "choch_bull": layer6.get('choch_bull_detected'),
+                            "choch_bear": layer6.get('choch_bear_detected'),
+                            "bos_bull": layer6.get('bos_bull_detected'),
+                            "bos_bear": layer6.get('bos_bear_detected'),
+                            "ob_bull": layer6.get('ob_bull_detected'),
+                            "ob_bear": layer6.get('ob_bear_detected'),
+                            "fvg_bull": layer6.get('fvg_bull_detected'),
+                            "fvg_bear": layer6.get('fvg_bear_detected'),
+                            "bull_bear_ratio": layer6.get('bull_bear_ratio')
                         },
                         "options": {
                             "iv_rank": layer14.get('iv_rank'),
