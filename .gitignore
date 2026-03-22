@@ -39,6 +39,12 @@ env/
 *~
 .DS_Store
 
+# Database
+*.db
+
+# Backtest output
+backtest_*.json
+
 # Logs
 logs/
 *.log
