@@ -233,7 +233,7 @@ class Layer16PutCallRatio:
         ma = sum(data) / len(data)
         
         # Calculate STDEV (exact)
-        variance = sum((x - ma) ** 2 for x in data) / len(data)
+        variance = sum((x - ma) ** 2 for x in data) / max(len(data) - 1, 1)
         sd = math.sqrt(variance)
         
         # Calculate bands (exact)

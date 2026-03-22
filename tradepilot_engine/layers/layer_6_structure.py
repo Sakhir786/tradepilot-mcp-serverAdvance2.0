@@ -293,9 +293,9 @@ class Layer6Structure:
 
         # Distance calculations
         distance_to_last_high = round(last_high - current_price, 2) if last_high else None
-        distance_to_last_high_pct = round((last_high - current_price) / current_price * 100, 2) if last_high else None
+        distance_to_last_high_pct = round((last_high - current_price) / last_high * 100, 2) if last_high else None
         distance_to_last_low = round(current_price - last_low, 2) if last_low else None
-        distance_to_last_low_pct = round((current_price - last_low) / current_price * 100, 2) if last_low else None
+        distance_to_last_low_pct = round((current_price - last_low) / last_low * 100, 2) if last_low and last_low != 0 else None
 
         # Swing range
         swing_range = None
@@ -304,7 +304,7 @@ class Layer6Structure:
 
         if last_high and last_low and last_high > last_low:
             swing_range = round(last_high - last_low, 2)
-            swing_range_pct = round(swing_range / last_low * 100, 2)
+            swing_range_pct = round(swing_range / current_price * 100, 2) if current_price != 0 else 0
             # 0% = at low, 100% = at high
             # Can be >100 (above range) or <0 (below range) - let AI see this
             price_position_in_range_pct = round((current_price - last_low) / (last_high - last_low) * 100, 2)

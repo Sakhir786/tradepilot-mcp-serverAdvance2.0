@@ -145,7 +145,7 @@ class Layer10CandleIntelligence:
             "current_upper_wick": round(df['upper_wick'].iloc[-1], 4),
             "current_lower_wick": round(df['lower_wick'].iloc[-1], 4),
             "avg_body": round(df['body'].rolling(window=14).mean().iloc[-1], 4),
-            "body_vs_avg_ratio": round(df['body'].iloc[-1] / df['body'].rolling(window=14).mean().iloc[-1], 2),
+            "body_vs_avg_ratio": round(df['body'].iloc[-1] / max(df['body'].rolling(window=14).mean().iloc[-1], 0.0001), 2),
             
             # Price Context
             "current_price": round(df["close"].iloc[-1], 2)
@@ -426,17 +426,18 @@ class Layer10CandleIntelligence:
         # Pattern detection
         doji = c_body <= (c_range * doji_size)
         
-        hammer = (c_range > 3 * c_body and 
-                 (c_close - c_low) / (c_range + 0.001) > 0.6 and 
+        hammer = (c_range > 3 * c_body and
+                 c_close >= c_open and
+                 (c_close - c_low) / (c_range + 0.001) > 0.6 and
                  (c_open - c_low) / (c_range + 0.001) > 0.6)
         
         inverted_hammer = (c_range > 3 * c_body and 
                          (c_high - c_close) / (c_range + 0.001) > 0.6 and 
                          (c_high - c_open) / (c_range + 0.001) > 0.6)
         
-        hanging_man = (c_range > 4 * c_body and 
-                      (c_close - c_low) / (c_range + 0.001) >= 0.75 and 
-                      (c_open - c_low) / (c_range + 0.001) >= 0.75 and 
+        hanging_man = (len(df) >= 3 and c_range > 4 * c_body and
+                      (c_close - c_low) / (c_range + 0.001) >= 0.75 and
+                      (c_open - c_low) / (c_range + 0.001) >= 0.75 and
                       p1_high < c_open and df['high'].iloc[-3] < c_open)
         
         shooting_star = (p1_bullish and c_open > p1_close and 

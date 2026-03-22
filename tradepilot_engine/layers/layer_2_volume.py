@@ -102,7 +102,8 @@ class Layer2Volume:
     
     def _calculate_ad_line(self, df: pd.DataFrame) -> pd.Series:
         """Calculate Accumulation/Distribution Line"""
-        mf_multiplier = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / (df["high"] - df["low"])
+        hl_range = df["high"] - df["low"]
+        mf_multiplier = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / hl_range.replace(0, np.nan)
         mf_multiplier = mf_multiplier.fillna(0)
         mf_volume = mf_multiplier * df["volume"]
         ad_line = mf_volume.cumsum()
@@ -110,10 +111,13 @@ class Layer2Volume:
     
     def _calculate_cmf(self, df: pd.DataFrame, period: int) -> pd.Series:
         """Calculate Chaikin Money Flow"""
-        mf_multiplier = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / (df["high"] - df["low"])
+        hl_range = df["high"] - df["low"]
+        mf_multiplier = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / hl_range.replace(0, np.nan)
         mf_multiplier = mf_multiplier.fillna(0)
         mf_volume = mf_multiplier * df["volume"]
-        cmf = mf_volume.rolling(window=period).sum() / df["volume"].rolling(window=period).sum()
+        vol_sum = df["volume"].rolling(window=period).sum()
+        cmf = mf_volume.rolling(window=period).sum() / vol_sum.replace(0, np.nan)
+        cmf = cmf.fillna(0)
         return cmf
     
     def _calculate_slope(self, series: pd.Series, period: int) -> float:

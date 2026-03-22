@@ -26,7 +26,7 @@ from enum import Enum
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, "/home/mickey/tradepilot-mcp-server")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine_18layer_core import (
     TradePilotEngine18Layer, 
@@ -91,26 +91,6 @@ router = APIRouter(prefix="/engine18", tags=["TradePilot 18-Layer Engine"])
 
 # Global engine instance (lazy initialization)
 
-def convert_numpy_types(obj):
-    """Convert numpy types to Python native types"""
-    import numpy as np
-    import math
-    if isinstance(obj, np.bool_):
-        return bool(obj)
-    elif isinstance(obj, (np.integer, int)):
-        return int(obj)
-    elif isinstance(obj, (np.floating, float)):
-        val = float(obj)
-        if math.isnan(val) or math.isinf(val):
-            return None
-        return val
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, dict):
-        return {k: convert_numpy_types(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_numpy_types(item) for item in obj]
-    return obj
 _engine: Optional[TradePilotEngine18Layer] = None
 
 
@@ -912,7 +892,7 @@ async def get_strategies(
     - Bear Call Spread (credit)
     """
     import sys
-    sys.path.insert(0, "/home/mickey/tradepilot-mcp-server")
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from polygon_client import analyze_with_strategies
     
     try:

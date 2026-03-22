@@ -52,7 +52,13 @@ class Layer5Trend:
         """
         if len(df) < 50:
             return self._empty_result("Insufficient data")
-        
+
+        # Reset instance state to prevent stale data across calls
+        self.flip_count = 0
+        self.last_flip_bar = 0
+        self.bars_in_trend = 0
+        self.last_direction = None
+
         df = df.copy()
         
         # Calculate volatility and adaptive multiplier
@@ -311,11 +317,12 @@ class Layer5Trend:
     def _analyze_volume(self, df: pd.DataFrame) -> Dict:
         """Analyze volume confirmation"""
         volume = df['volume'].values
-        avg_volume = np.convolve(volume, np.ones(20)/20, mode='valid')
-        
+        avg_volume_valid = np.convolve(volume, np.ones(20)/20, mode='valid')
+
         # Pad beginning with expanding mean
-        for i in range(min(19, len(volume))):
-            avg_volume = np.insert(avg_volume, 0, np.mean(volume[:i+1]))
+        pad_len = min(19, len(volume))
+        padding = np.array([np.mean(volume[:i+1]) for i in range(pad_len)])
+        avg_volume = np.concatenate([padding, avg_volume_valid])
         
         vol_ratio = volume[-1] / avg_volume[-1] if avg_volume[-1] > 0 else 1.0
         volume_confirmed = vol_ratio >= self.min_vol_ratio
@@ -477,20 +484,22 @@ class Layer5Trend:
         
         plus_di = np.zeros(len(df))
         minus_di = np.zeros(len(df))
-        
-        plus_di[0] = 0
-        minus_di[0] = 0
-        
-        for i in range(1, len(df)):
-            if i < period:
-                plus_di[i] = 0
-                minus_di[i] = 0
-            else:
-                smoothed_plus_dm = np.sum(plus_dm[i-period+1:i+1])
-                smoothed_minus_dm = np.sum(minus_dm[i-period+1:i+1])
-                
-                plus_di[i] = 100 * smoothed_plus_dm / (atr[i] * period) if atr[i] > 0 else 0
-                minus_di[i] = 100 * smoothed_minus_dm / (atr[i] * period) if atr[i] > 0 else 0
+        smoothed_plus_dm = np.zeros(len(df))
+        smoothed_minus_dm = np.zeros(len(df))
+
+        # Initialize with simple sum for first period
+        if len(df) > period:
+            smoothed_plus_dm[period] = np.sum(plus_dm[1:period+1])
+            smoothed_minus_dm[period] = np.sum(minus_dm[1:period+1])
+            plus_di[period] = 100 * smoothed_plus_dm[period] / (atr[period] * period) if atr[period] > 0 else 0
+            minus_di[period] = 100 * smoothed_minus_dm[period] / (atr[period] * period) if atr[period] > 0 else 0
+
+            # Wilder's smoothing for subsequent bars
+            for i in range(period + 1, len(df)):
+                smoothed_plus_dm[i] = (smoothed_plus_dm[i-1] * (period - 1) + plus_dm[i]) / period
+                smoothed_minus_dm[i] = (smoothed_minus_dm[i-1] * (period - 1) + minus_dm[i]) / period
+                plus_di[i] = 100 * smoothed_plus_dm[i] / (atr[i] * period) if atr[i] > 0 else 0
+                minus_di[i] = 100 * smoothed_minus_dm[i] / (atr[i] * period) if atr[i] > 0 else 0
         
         dx = np.zeros(len(df))
         for i in range(len(df)):

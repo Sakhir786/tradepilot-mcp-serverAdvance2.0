@@ -3,6 +3,9 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 
+# Default request timeout (seconds)
+REQUEST_TIMEOUT = 15
+
 # Load environment variables
 load_dotenv()
 API_KEY = os.getenv("POLYGON_API_KEY")
@@ -86,7 +89,7 @@ def get_candles_for_mode(symbol: str, mode: str = "swing"):
         f"?adjusted=true&sort=asc&limit={config['limit']}&apiKey={API_KEY}"
     )
     
-    response = requests.get(url)
+    response = requests.get(url, timeout=REQUEST_TIMEOUT)
     data = response.json()
     
     # Add mode metadata
@@ -116,7 +119,7 @@ def get_candles_for_mode(symbol: str, mode: str = "swing"):
 
 def get_symbol_lookup(query: str):
     url = f"{BASE_URL}/v3/reference/tickers?search={query}&active=true&apiKey={API_KEY}"
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_candles(symbol: str, tf: str = "day", limit: int = 730):
@@ -153,7 +156,7 @@ def get_candles(symbol: str, tf: str = "day", limit: int = 730):
         f"?adjusted=true&sort=asc&limit={limit}&apiKey={API_KEY}"
     )
 
-    response = requests.get(url)
+    response = requests.get(url, timeout=REQUEST_TIMEOUT)
     data = response.json()
 
     # Gracefully handle delayed or empty responses
@@ -174,17 +177,17 @@ def get_candles(symbol: str, tf: str = "day", limit: int = 730):
 
 def get_news(symbol: str):
     url = f"{BASE_URL}/v2/reference/news?ticker={symbol}&limit=5&apiKey={API_KEY}"
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_last_trade(symbol: str):
     url = f"{BASE_URL}/v2/last/trade/{symbol}?apiKey={API_KEY}"
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_ticker_details(symbol: str):
     url = f"{BASE_URL}/v3/reference/tickers/{symbol}?apiKey={API_KEY}"
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_fundamentals(symbol: str):
@@ -192,17 +195,17 @@ def get_fundamentals(symbol: str):
     Get latest company financials (quarterly).
     """
     url = f"{BASE_URL}/v2/reference/financials?ticker={symbol.upper()}&limit=1&apiKey={API_KEY}"
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_previous_day_bar(ticker: str):
     url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/prev?apiKey={API_KEY}"
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_single_stock_snapshot(ticker: str):
     url = f"{BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}?apiKey={API_KEY}"
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 # ---------------- Options endpoints ----------------
 
@@ -213,7 +216,7 @@ def get_all_option_contracts(underlying_ticker: str, expiration_date: str | None
     url = f"{BASE_URL}/v3/reference/options/contracts?underlying_ticker={underlying_ticker}&limit={limit}&apiKey={API_KEY}"
     if expiration_date:
         url += f"&expiration_date.gte={expiration_date}"
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_options_chain(symbol: str, option_type: str = "call", days_out: int = 30):
@@ -228,7 +231,7 @@ def get_options_chain(symbol: str, option_type: str = "call", days_out: int = 30
         f"underlying_ticker={symbol}&contract_type={option_type}&"
         f"expiration_date.gte={today}&expiration_date.lte={target_date}&limit=100&apiKey={API_KEY}"
     )
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_option_aggregates(options_ticker: str, multiplier: int, timespan: str, from_date: str, to_date: str):
@@ -236,12 +239,12 @@ def get_option_aggregates(options_ticker: str, multiplier: int, timespan: str, f
         f"{BASE_URL}/v2/aggs/ticker/{options_ticker}/range/{multiplier}/{timespan}/{from_date}/{to_date}"
         f"?apiKey={API_KEY}"
     )
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_option_previous_day_bar(options_ticker: str):
     url = f"{BASE_URL}/v2/aggs/ticker/{options_ticker}/prev?apiKey={API_KEY}"
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_option_chain_snapshot(underlying_asset: str, cursor: str | None = None, limit: int = 50):
@@ -251,7 +254,7 @@ def get_option_chain_snapshot(underlying_asset: str, cursor: str | None = None, 
     url = f"{BASE_URL}/v3/snapshot/options/{underlying_asset}?limit={limit}&apiKey={API_KEY}"
     if cursor:
         url += f"&cursor={cursor}"
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_option_contract_snapshot(underlying: str, contract: str):
@@ -259,7 +262,7 @@ def get_option_contract_snapshot(underlying: str, contract: str):
     Snapshot for a single option contract.
     """
     url = f"{BASE_URL}/v3/snapshot/options/{underlying}/{contract}?apiKey={API_KEY}"
-    return requests.get(url).json()
+    return requests.get(url, timeout=REQUEST_TIMEOUT).json()
 
 
 def get_full_option_chain_snapshot(underlying_asset: str, limit: int = 100, min_dte: int = 1):
@@ -275,9 +278,9 @@ def get_full_option_chain_snapshot(underlying_asset: str, limit: int = 100, min_
     # Get current price first
     current_price = 0
     try:
-        price_resp = requests.get(f"{BASE_URL}/v2/aggs/ticker/{underlying_asset}/prev?apiKey={API_KEY}").json()
+        price_resp = requests.get(f"{BASE_URL}/v2/aggs/ticker/{underlying_asset}/prev?apiKey={API_KEY}", timeout=REQUEST_TIMEOUT).json()
         current_price = price_resp.get("results", [{}])[0].get("c", 0)
-    except:
+    except (requests.RequestException, KeyError, IndexError, ValueError, TypeError):
         pass
     
     # Fallback prices
@@ -333,9 +336,9 @@ def get_spread_options(underlying_asset: str, strategy: str = "bull_call_spread"
     # Get current price with fallbacks
     current_price = 0
     try:
-        price_resp = requests.get(f"{BASE_URL}/v2/aggs/ticker/{underlying_asset}/prev?apiKey={API_KEY}").json()
+        price_resp = requests.get(f"{BASE_URL}/v2/aggs/ticker/{underlying_asset}/prev?apiKey={API_KEY}", timeout=REQUEST_TIMEOUT).json()
         current_price = price_resp.get("results", [{}])[0].get("c", 0)
-    except:
+    except (requests.RequestException, KeyError, IndexError, ValueError, TypeError):
         pass
     
     if not current_price:
@@ -356,8 +359,8 @@ def get_spread_options(underlying_asset: str, strategy: str = "bull_call_spread"
     params += f"&limit={limit}&apiKey={API_KEY}"
     
     # Fetch both calls and puts for flexibility
-    calls_resp = requests.get(f"{BASE_URL}/v3/snapshot/options/{underlying_asset}?contract_type=call&{params}").json()
-    puts_resp = requests.get(f"{BASE_URL}/v3/snapshot/options/{underlying_asset}?contract_type=put&{params}").json()
+    calls_resp = requests.get(f"{BASE_URL}/v3/snapshot/options/{underlying_asset}?contract_type=call&{params}", timeout=REQUEST_TIMEOUT).json()
+    puts_resp = requests.get(f"{BASE_URL}/v3/snapshot/options/{underlying_asset}?contract_type=put&{params}", timeout=REQUEST_TIMEOUT).json()
     
     calls = calls_resp.get("results", [])
     puts = puts_resp.get("results", [])
@@ -389,7 +392,7 @@ def _find_optimal_spread(calls, puts, current_price, strategy, width, dte_target
         exp = d.get("expiration_date", "")
         try:
             dte = (datetime.strptime(exp, "%Y-%m-%d").date() - datetime.now().date()).days
-        except:
+        except (requests.RequestException, KeyError, IndexError, ValueError, TypeError):
             dte = 0
         # Use last_quote if available, otherwise use day data
         bid = q.get("bid") or day.get("close", 0) * 0.98  # Estimate bid as 98% of close
@@ -563,9 +566,9 @@ def get_single_option(underlying_asset: str, option_type: str = "call",
     # Get current price
     current_price = 0
     try:
-        price_resp = requests.get(f"{BASE_URL}/v2/aggs/ticker/{underlying_asset}/prev?apiKey={API_KEY}").json()
+        price_resp = requests.get(f"{BASE_URL}/v2/aggs/ticker/{underlying_asset}/prev?apiKey={API_KEY}", timeout=REQUEST_TIMEOUT).json()
         current_price = price_resp.get("results", [{}])[0].get("c", 0)
-    except:
+    except (requests.RequestException, KeyError, IndexError, ValueError, TypeError):
         pass
     
     if not current_price:
@@ -585,7 +588,7 @@ def get_single_option(underlying_asset: str, option_type: str = "call",
     params += f"&strike_price.gte={strike_low}&strike_price.lte={strike_high}"
     params += f"&limit={limit}&apiKey={API_KEY}"
     
-    resp = requests.get(f"{BASE_URL}/v3/snapshot/options/{underlying_asset}?{params}").json()
+    resp = requests.get(f"{BASE_URL}/v3/snapshot/options/{underlying_asset}?{params}", timeout=REQUEST_TIMEOUT).json()
     contracts = resp.get("results", [])
     
     if not contracts:
@@ -606,7 +609,7 @@ def get_single_option(underlying_asset: str, option_type: str = "call",
         exp = d.get("expiration_date", "")
         try:
             dte = (datetime.strptime(exp, "%Y-%m-%d").date() - datetime.now().date()).days
-        except:
+        except (requests.RequestException, KeyError, IndexError, ValueError, TypeError):
             continue
         
         if dte < 1:
@@ -776,9 +779,9 @@ def analyze_with_strategies(symbol: str, mode: str = "swing"):
     # Get current price
     current_price = 0
     try:
-        price_resp = requests.get(f"{BASE_URL}/v2/aggs/ticker/{symbol}/prev?apiKey={API_KEY}").json()
+        price_resp = requests.get(f"{BASE_URL}/v2/aggs/ticker/{symbol}/prev?apiKey={API_KEY}", timeout=REQUEST_TIMEOUT).json()
         current_price = price_resp.get("results", [{}])[0].get("c", 0)
-    except:
+    except (requests.RequestException, KeyError, IndexError, ValueError, TypeError):
         pass
     
     if not current_price:
@@ -799,8 +802,8 @@ def analyze_with_strategies(symbol: str, mode: str = "swing"):
     params += f"&strike_price.gte={strike_low}&strike_price.lte={strike_high}"
     params += f"&limit=250&apiKey={API_KEY}"
     
-    calls_resp = requests.get(f"{BASE_URL}/v3/snapshot/options/{symbol}?contract_type=call&{params}").json()
-    puts_resp = requests.get(f"{BASE_URL}/v3/snapshot/options/{symbol}?contract_type=put&{params}").json()
+    calls_resp = requests.get(f"{BASE_URL}/v3/snapshot/options/{symbol}?contract_type=call&{params}", timeout=REQUEST_TIMEOUT).json()
+    puts_resp = requests.get(f"{BASE_URL}/v3/snapshot/options/{symbol}?contract_type=put&{params}", timeout=REQUEST_TIMEOUT).json()
     
     calls = calls_resp.get("results", [])
     puts = puts_resp.get("results", [])
@@ -813,7 +816,7 @@ def analyze_with_strategies(symbol: str, mode: str = "swing"):
         exp = d.get("expiration_date", "")
         try:
             dte = (datetime.strptime(exp, "%Y-%m-%d").date() - datetime.now().date()).days
-        except:
+        except (requests.RequestException, KeyError, IndexError, ValueError, TypeError):
             dte = 0
         
         price = day.get("vwap") or day.get("close", 0)

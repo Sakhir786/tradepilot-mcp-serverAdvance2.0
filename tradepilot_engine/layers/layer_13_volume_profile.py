@@ -64,7 +64,14 @@ class Layer13VolumeProfile:
         """
         if len(df) < 20:
             return self._empty_result("Insufficient data")
-        
+
+        # Reset instance state to prevent stale data across calls
+        self.poc_touches = 0
+        self.last_poc_touch_bar = 0
+        self.bars_at_poc = 0
+        self.bars_above_vah = 0
+        self.bars_below_val = 0
+
         df = df.copy()
         
         # Determine anchor and range
@@ -105,7 +112,7 @@ class Layer13VolumeProfile:
         position = self._classify_position(df, value_area)
         
         # Crossover data (raw facts)
-        crossover_data = self._calculate_crossovers(df, value_area)
+        crossover_data = self._calculate_crossovers(df, value_area, poc)
         
         current_price = df['close'].iloc[-1]
         
@@ -312,7 +319,7 @@ class Layer13VolumeProfile:
         total_volume = profile['total_volume']
         
         if total_volume == 0:
-            return {'vah_price': None, 'val_price': None}
+            return {'vah_price': None, 'val_price': None, 'vah_level': None, 'val_level': None, 'va_volume': 0, 'va_volume_pct': 0}
         
         va_target = total_volume * (self.va_percent / 100)
         va_volume = volume_at_price[poc['level']]
@@ -558,7 +565,7 @@ class Layer13VolumeProfile:
     
     # ==================== CROSSOVER CALCULATION ====================
     
-    def _calculate_crossovers(self, df: pd.DataFrame, value_area: Dict) -> Dict:
+    def _calculate_crossovers(self, df: pd.DataFrame, value_area: Dict, poc: Dict = None) -> Dict:
         """Calculate crossover data - raw facts only"""
         if len(df) < 2:
             return {
@@ -566,30 +573,31 @@ class Layer13VolumeProfile:
                 'crossed_above_val': False, 'crossed_below_val': False,
                 'crossed_above_poc': False, 'crossed_below_poc': False
             }
-        
+
         close = df['close'].iloc[-1]
         close_prev = df['close'].iloc[-2]
-        
+
         vah = value_area.get('vah_price')
         val = value_area.get('val_price')
-        
+        poc_price = poc.get('price') if poc else None
+
         def safe_cross_above(curr, prev, level):
             if level is None:
                 return False
             return curr > level and prev <= level
-        
+
         def safe_cross_below(curr, prev, level):
             if level is None:
                 return False
             return curr < level and prev >= level
-        
+
         return {
             'crossed_above_vah': safe_cross_above(close, close_prev, vah),
             'crossed_below_vah': safe_cross_below(close, close_prev, vah),
             'crossed_above_val': safe_cross_above(close, close_prev, val),
             'crossed_below_val': safe_cross_below(close, close_prev, val),
-            'crossed_above_poc': False,  # Would need POC passed in
-            'crossed_below_poc': False
+            'crossed_above_poc': safe_cross_above(close, close_prev, poc_price),
+            'crossed_below_poc': safe_cross_below(close, close_prev, poc_price)
         }
     
     def _empty_result(self, reason: str) -> Dict:

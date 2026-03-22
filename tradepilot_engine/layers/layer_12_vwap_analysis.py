@@ -189,7 +189,10 @@ class Layer12VWAPAnalysis:
         if not isinstance(df.index, pd.DatetimeIndex):
             anchor_idx = 0
         else:
-            anchor_idx = df.index.searchsorted(self.anchor_datetime)
+            anchor_idx = df.index.searchsorted(self.anchor_datetime, side='right')
+            # searchsorted returns insertion point; use the bar at or after anchor
+            if anchor_idx > 0:
+                anchor_idx = max(0, anchor_idx - 1)
             if anchor_idx >= len(df):
                 anchor_idx = 0
         
@@ -221,7 +224,7 @@ class Layer12VWAPAnalysis:
                     self.sum_sq += diff * diff
                 
                 if self.bars > 1:
-                    variance = self.sum_sq / self.bars
+                    variance = self.sum_sq / (self.bars - 1)
                     stdev = np.sqrt(variance)
                     stdev_values[i] = stdev
         

@@ -1583,9 +1583,10 @@ class Layer18PureDataAggregator:
         if safe_bool(l12.get("price_above_vwap")): bull_signals += 1
         if safe_bool(l12.get("price_below_vwap")): bear_signals += 1
         
-        # EMA bias
-        if safe_bool(l6.get("is_above_trend_ema")): bull_signals += 1
-        else: bear_signals += 1
+        # EMA bias (only count if data is available)
+        ema_above = l6.get("is_above_trend_ema")
+        if ema_above is True: bull_signals += 1
+        elif ema_above is False: bear_signals += 1
         
         # MTF bias
         mtf_bull = safe_int(l9.get("bull_count"), 0)
@@ -1597,7 +1598,7 @@ class Layer18PureDataAggregator:
         max_pain = safe_float(l15.get("max_pain"))
         max_pain_distance = None
         max_pain_zone = None
-        if max_pain and current_price:
+        if max_pain and max_pain != 0 and current_price:
             max_pain_distance = abs((current_price - max_pain) / max_pain * 100)
             if max_pain_distance < 0.5:
                 max_pain_zone = "EXTREME_DANGER"
@@ -1644,9 +1645,9 @@ class Layer18PureDataAggregator:
             # Mode-Specific Info
             "mode_context": {
                 "mode": mode.value if isinstance(mode, TradeMode) else str(mode),
-                "recommended_dte_min": MODE_CONFIG[mode]["dte_min"] if isinstance(mode, TradeMode) else 7,
-                "recommended_dte_max": MODE_CONFIG[mode]["dte_max"] if isinstance(mode, TradeMode) else 45,
-                "ideal_delta_range": MODE_CONFIG[mode]["ideal_delta_range"] if isinstance(mode, TradeMode) else (0.50, 0.70)
+                "recommended_dte_min": MODE_CONFIG.get(mode, {}).get("dte_min", 7) if isinstance(mode, TradeMode) else 7,
+                "recommended_dte_max": MODE_CONFIG.get(mode, {}).get("dte_max", 45) if isinstance(mode, TradeMode) else 45,
+                "ideal_delta_range": MODE_CONFIG.get(mode, {}).get("ideal_delta_range", (0.50, 0.70)) if isinstance(mode, TradeMode) else (0.50, 0.70)
             }
         }
     

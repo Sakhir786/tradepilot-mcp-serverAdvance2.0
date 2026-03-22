@@ -152,8 +152,10 @@ class Layer14IVAnalysis:
         if len(df) < self.hv_window:
             return {'current': None, 'smoothed': None, 'high_52w': None, 'low_52w': None, 'series': None}
         
-        # Log returns
-        log_returns = np.log(df['close'] / df['close'].shift(1))
+        # Log returns (guard against zero/negative prices)
+        close_ratio = df['close'] / df['close'].shift(1)
+        close_ratio = close_ratio.replace(0, np.nan).clip(lower=1e-10)
+        log_returns = np.log(close_ratio)
         
         # Calculate HV
         hv_series = log_returns.rolling(self.hv_window).std() * np.sqrt(252) * 100
@@ -242,7 +244,7 @@ class Layer14IVAnalysis:
     
     def _calculate_expected_move(self, price: float, iv: float, dte: int) -> Dict:
         """Calculate expected move for specified DTE"""
-        if iv is None or price is None or dte <= 0:
+        if iv is None or price is None or price == 0 or dte <= 0:
             return None
         
         # 1 Standard Deviation

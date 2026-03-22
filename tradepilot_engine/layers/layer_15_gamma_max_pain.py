@@ -301,7 +301,7 @@ class Layer15GammaMaxPain:
             today = datetime.now().date()
             max_date = today + timedelta(days=730)
             return today <= expiry_date <= max_date
-        except:
+        except (ValueError, TypeError):
             return False
     
     def _get_nearest_expiration(self, parsed_data: Dict) -> Optional[str]:
@@ -320,7 +320,7 @@ class Layer15GammaMaxPain:
                 if days >= 0 and days < min_days:
                     min_days = days
                     nearest = expiry_str
-            except:
+            except (ValueError, TypeError):
                 continue
         
         return nearest
@@ -415,8 +415,8 @@ class Layer15GammaMaxPain:
         total_put_gex = 0
         
         for strike, data in expiry_data.items():
-            call_gex = data["call_gamma"] * data["call_oi"] * 100 * (strike ** 2)
-            put_gex = -1 * data["put_gamma"] * data["put_oi"] * 100 * (strike ** 2)
+            call_gex = data["call_gamma"] * data["call_oi"] * 100 * current_price
+            put_gex = -1 * data["put_gamma"] * data["put_oi"] * 100 * current_price
             
             strike_gex = call_gex + put_gex
             gex_by_strike[strike] = strike_gex
@@ -464,7 +464,7 @@ class Layer15GammaMaxPain:
             expiry_date = datetime.strptime(expiration_date, "%Y-%m-%d").date()
             today = datetime.now().date()
             days_to_expiry = (expiry_date - today).days
-        except:
+        except (ValueError, TypeError):
             days_to_expiry = 999
         
         # Calculate pin probability (raw calculation)

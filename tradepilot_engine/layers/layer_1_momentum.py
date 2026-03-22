@@ -122,17 +122,19 @@ class Layer1Momentum:
         }
     
     def _calculate_rsi(self, df: pd.DataFrame, period: int) -> pd.Series:
-        """Calculate RSI"""
+        """Calculate RSI using Wilder's smoothing"""
         delta = df["close"].diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-        
-        avg_gain = gain.rolling(window=period).mean()
-        avg_loss = loss.rolling(window=period).mean()
-        
-        rs = avg_gain / avg_loss.replace(0, np.inf)
+        gain = delta.where(delta > 0, 0.0)
+        loss = -delta.where(delta < 0, 0.0)
+
+        # Use Wilder's smoothing (EMA with alpha=1/period)
+        avg_gain = gain.ewm(alpha=1.0/period, min_periods=period, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1.0/period, min_periods=period, adjust=False).mean()
+
+        rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
-        
+        rsi = rsi.fillna(50.0)
+
         return rsi
     
     def _calculate_macd(self, df: pd.DataFrame, fast: int, slow: int, signal: int):
@@ -151,7 +153,9 @@ class Layer1Momentum:
         lowest_low = df["low"].rolling(window=length).min()
         highest_high = df["high"].rolling(window=length).max()
         
-        k = 100 * (df["close"] - lowest_low) / (highest_high - lowest_low)
+        denom = highest_high - lowest_low
+        k = 100 * (df["close"] - lowest_low) / denom.replace(0, np.nan)
+        k = k.fillna(50.0)
         k = k.rolling(window=smooth).mean()
         d = k.rolling(window=smooth).mean()
         
@@ -159,12 +163,15 @@ class Layer1Momentum:
     
     def _calculate_cmf(self, df: pd.DataFrame, period: int) -> pd.Series:
         """Calculate Chaikin Money Flow"""
-        mf_multiplier = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / (df["high"] - df["low"])
+        hl_range = df["high"] - df["low"]
+        mf_multiplier = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / hl_range.replace(0, np.nan)
         mf_multiplier = mf_multiplier.fillna(0)
-        
+
         mf_volume = mf_multiplier * df["volume"]
-        cmf = mf_volume.rolling(window=period).sum() / df["volume"].rolling(window=period).sum()
-        
+        vol_sum = df["volume"].rolling(window=period).sum()
+        cmf = mf_volume.rolling(window=period).sum() / vol_sum.replace(0, np.nan)
+        cmf = cmf.fillna(0)
+
         return cmf
     
     def _calculate_adx(self, df: pd.DataFrame, period: int):
@@ -181,7 +188,9 @@ class Layer1Momentum:
         plus_di = 100 * pd.Series(plus_dm).rolling(window=period).mean() / atr
         minus_di = 100 * pd.Series(minus_dm).rolling(window=period).mean() / atr
         
-        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+        di_sum = plus_di + minus_di
+        dx = 100 * abs(plus_di - minus_di) / di_sum.replace(0, np.nan)
+        dx = dx.fillna(0)
         adx = dx.rolling(window=period).mean()
         
         return adx, plus_di, minus_di
