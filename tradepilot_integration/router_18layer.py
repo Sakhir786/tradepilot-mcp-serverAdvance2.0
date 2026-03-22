@@ -105,22 +105,32 @@ def get_engine() -> TradePilotEngine18Layer:
 # Import polygon client from production (adjust path)
 try:
     from polygon_client import (
-    get_candles_for_mode,
-        get_candles, 
+        get_candles_for_mode,
+        get_candles,
         get_option_chain_snapshot,
         get_full_option_chain_snapshot,
-        get_ticker_details
+        get_ticker_details,
+        get_market_context
     )
 except ImportError:
     # Fallback imports
     def get_candles(symbol, tf="day", limit=730):
         return {"error": "Polygon client not available"}
-    
+
+    def get_candles_for_mode(symbol, mode="swing"):
+        return {"error": "Polygon client not available"}
+
     def get_option_chain_snapshot(symbol, cursor=None, limit=50):
         return {"error": "Polygon client not available"}
-    
+
+    def get_full_option_chain_snapshot(symbol, limit=100):
+        return {"error": "Polygon client not available"}
+
     def get_ticker_details(symbol):
         return {"error": "Polygon client not available"}
+
+    def get_market_context(mode="swing"):
+        return {"market_bias": "neutral", "warnings": ["Polygon client not available"]}
 
 
 @router.get("/analyze")
@@ -185,14 +195,22 @@ async def full_analysis(
                 options_data = get_full_option_chain_snapshot(symbol, limit=100)
             except Exception as e:
                 print(f"[Router] Options fetch warning: {e}")
-        
+
+        # Fetch market-wide context (SPY + VIX)
+        market_ctx = {}
+        try:
+            market_ctx = get_market_context(mode=mode.value)
+        except Exception as e:
+            print(f"[Router] Market context warning: {e}")
+
         # Run analysis
         result = engine.analyze(
             ticker=symbol,
             candles_data=candles_data,
             options_data=options_data,
             mode=trade_mode,
-            timeframe=tf
+            timeframe=tf,
+            market_context=market_ctx
         )
         
         # Format output
@@ -235,19 +253,27 @@ async def quick_signal(
         
         # Fetch minimal candle data
         candles_data = get_candles(symbol, tf="day", limit=200)
-        
+
         if not candles_data or "results" not in candles_data:
             raise HTTPException(status_code=400, detail=f"Unable to fetch data for {symbol}")
-        
+
+        # Fetch market context
+        market_ctx = {}
+        try:
+            market_ctx = get_market_context(mode=mode.value)
+        except Exception as e:
+            print(f"[Router] Quick market context warning: {e}")
+
         # Run analysis (without options for speed)
         result = engine.analyze(
             ticker=symbol,
             candles_data=candles_data,
             options_data=None,
             mode=trade_mode,
-            timeframe="day"
+            timeframe="day",
+            market_context=market_ctx
         )
-        
+
         return convert_numpy_types({
             "ticker": symbol,
             "mode": mode.value,
@@ -265,6 +291,15 @@ async def quick_signal(
                 "expiry_dte": result.expiry_dte
             },
             "playbook": result.matched_playbook,
+            "market_context": {
+                "market_bias": market_ctx.get("market_bias", "unknown"),
+                "vix_level": market_ctx.get("vix", {}).get("level"),
+                "spy_trend": market_ctx.get("spy", {}).get("trend"),
+                "risk_level": market_ctx.get("risk_level", "unknown"),
+                "favor_calls": market_ctx.get("favor_calls", False),
+                "favor_puts": market_ctx.get("favor_puts", False),
+                "warnings": market_ctx.get("warnings", [])
+            },
             "quick_summary": f"{'🟢' if result.direction == 'BULLISH' else '🔴' if result.direction == 'BEARISH' else '⚪'} {result.action} | {result.confidence.value} ({result.win_probability:.0f}%)"
         })
     
@@ -289,7 +324,14 @@ async def scan_tickers(
         ticker_list = [s.strip().upper() for s in symbols.split(",")][:20]
         trade_mode = TradeMode.SCALP if mode == TradeModeParam.scalp else TradeMode.SWING
         results = []
-        
+
+        # Fetch market context ONCE for all tickers
+        market_ctx = {}
+        try:
+            market_ctx = get_market_context(mode=mode.value)
+        except Exception as e:
+            print(f"[Router] Scan market context warning: {e}")
+
         for symbol in ticker_list:
             try:
                 candles_data = get_candles_for_mode(symbol, mode=mode.value)
@@ -298,7 +340,8 @@ async def scan_tickers(
                         ticker=symbol,
                         candles_data=candles_data,
                         options_data=None,
-                        mode=trade_mode
+                        mode=trade_mode,
+                        market_context=market_ctx
                     )
                     
                     tech = result.technical_layers or {}
@@ -363,6 +406,17 @@ async def scan_tickers(
             "scan_time": datetime.now().isoformat(),
             "mode": mode.value,
             "count": len(ticker_list),
+            "market_context": {
+                "market_bias": market_ctx.get("market_bias", "unknown"),
+                "spy_trend": market_ctx.get("spy", {}).get("trend"),
+                "spy_price": market_ctx.get("spy", {}).get("price"),
+                "vix_level": market_ctx.get("vix", {}).get("level"),
+                "vix_regime": market_ctx.get("vix", {}).get("regime"),
+                "risk_level": market_ctx.get("risk_level", "unknown"),
+                "favor_calls": market_ctx.get("favor_calls", False),
+                "favor_puts": market_ctx.get("favor_puts", False),
+                "warnings": market_ctx.get("warnings", [])
+            },
             "results": results
         })
     except Exception as e:
@@ -384,11 +438,18 @@ async def compare_setups(
     try:
         engine = get_engine()
         ticker_list = [s.strip().upper() for s in symbols.split(",")][:5]  # Max 5 for comparison
-        
+
         trade_mode = TradeMode.SCALP if mode == TradeModeParam.scalp else TradeMode.SWING
-        
+
+        # Fetch market context ONCE for all comparisons
+        market_ctx = {}
+        try:
+            market_ctx = get_market_context(mode=mode.value)
+        except Exception as e:
+            print(f"[Router] Compare market context warning: {e}")
+
         comparisons = []
-        
+
         for symbol in ticker_list:
             try:
                 candles_data = get_candles(symbol, tf="day", limit=730)
@@ -397,13 +458,14 @@ async def compare_setups(
                     options_data = get_option_chain_snapshot(symbol, limit=50)
                 except:
                     pass
-                
+
                 if candles_data and "results" in candles_data:
                     result = engine.analyze(
                         ticker=symbol,
                         candles_data=candles_data,
                         options_data=options_data,
-                        mode=trade_mode
+                        mode=trade_mode,
+                        market_context=market_ctx
                     )
                     
                     comparisons.append({
@@ -448,6 +510,15 @@ async def compare_setups(
         return convert_numpy_types({
             "comparison_time": datetime.now().isoformat(),
             "mode": mode.value,
+            "market_context": {
+                "market_bias": market_ctx.get("market_bias", "unknown"),
+                "spy_trend": market_ctx.get("spy", {}).get("trend"),
+                "vix_level": market_ctx.get("vix", {}).get("level"),
+                "risk_level": market_ctx.get("risk_level", "unknown"),
+                "favor_calls": market_ctx.get("favor_calls", False),
+                "favor_puts": market_ctx.get("favor_puts", False),
+                "warnings": market_ctx.get("warnings", [])
+            },
             "best_setup": best_setup["ticker"] if best_setup else None,
             "best_probability": best_setup["win_probability"] if best_setup else 0,
             "ranked_setups": valid_comparisons,
@@ -818,22 +889,43 @@ async def get_ai_prompt(
             options_data = get_option_chain_snapshot(symbol, limit=50)
         except:
             pass
-        
+
+        # Fetch market context
+        market_ctx = {}
+        try:
+            market_ctx = get_market_context(mode=mode.value)
+        except Exception as e:
+            print(f"[Router] AI-prompt market context warning: {e}")
+
         if candles_data and "results" in candles_data:
             result = engine.analyze(
                 ticker=symbol,
                 candles_data=candles_data,
                 options_data=options_data,
-                mode=trade_mode
+                mode=trade_mode,
+                market_context=market_ctx
             )
-            
+
+            # Market context summary for prompt
+            spy_info = market_ctx.get("spy", {})
+            vix_info = market_ctx.get("vix", {})
+            mkt_bias = market_ctx.get("market_bias", "unknown")
+            mkt_warnings = market_ctx.get("warnings", [])
+
             # Build AI-friendly prompt
             prompt = f"""## TradePilot 18-Layer Analysis for {symbol}
+
+### Market Context (SPY + VIX)
+- **SPY**: ${spy_info.get('price', '?')} | Trend: {spy_info.get('trend', '?')} | vs 200MA: {spy_info.get('distance_from_200ma_pct', '?')}%
+- **VIX**: {vix_info.get('level', '?')} | Regime: {vix_info.get('regime', '?')} | Percentile: {vix_info.get('percentile', '?')}
+- **Market Bias**: {mkt_bias} | Risk: {market_ctx.get('risk_level', '?')}
+- **Favor**: {'CALLS' if market_ctx.get('favor_calls') else 'PUTS' if market_ctx.get('favor_puts') else 'NEUTRAL'}
+{chr(10).join('- ⚠️ ' + w for w in mkt_warnings) if mkt_warnings else ''}
 
 ### Quick Summary
 - **Ticker**: {result.ticker} @ ${result.current_price:.2f}
 - **Mode**: {result.mode.value}
-- **Trade Valid**: {'✅ YES' if result.trade_valid else '❌ NO'}
+- **Trade Valid**: {'YES' if result.trade_valid else 'NO'}
 - **Direction**: {result.direction}
 - **Action**: {result.action}
 - **Confidence**: {result.confidence.value} ({result.win_probability:.1f}%)
@@ -858,13 +950,13 @@ async def get_ai_prompt(
 {chr(10).join('- ' + c for c in result.concerns) if result.concerns else '- None identified'}
 
 ### Raw Layer Data
-Available for detailed analysis in the `layer_data` field.
+Available for detailed analysis in the `layer_data` and `market_context` fields.
 """
-            
+
             return convert_numpy_types({
                 "prompt": prompt,
                 "structured_data": engine.to_dict(result),
-                "usage_instructions": "Pass this prompt to Claude or GPT for detailed trading analysis. The structured_data contains all layer outputs for deep analysis."
+                "usage_instructions": "Pass this prompt to Claude or GPT for detailed trading analysis. The structured_data contains all layer outputs AND market_context (SPY+VIX) for deep analysis."
             })
         else:
             raise HTTPException(status_code=400, detail=f"Unable to analyze {symbol}")
@@ -894,9 +986,27 @@ async def get_strategies(
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from polygon_client import analyze_with_strategies
-    
+
     try:
         result = analyze_with_strategies(symbol.upper(), mode.lower())
+
+        # Add market context to strategies output
+        try:
+            market_ctx = get_market_context(mode=mode.lower())
+            result["market_context"] = {
+                "market_bias": market_ctx.get("market_bias", "unknown"),
+                "spy_trend": market_ctx.get("spy", {}).get("trend"),
+                "spy_price": market_ctx.get("spy", {}).get("price"),
+                "vix_level": market_ctx.get("vix", {}).get("level"),
+                "vix_regime": market_ctx.get("vix", {}).get("regime"),
+                "risk_level": market_ctx.get("risk_level", "unknown"),
+                "favor_calls": market_ctx.get("favor_calls", False),
+                "favor_puts": market_ctx.get("favor_puts", False),
+                "warnings": market_ctx.get("warnings", [])
+            }
+        except Exception as e:
+            print(f"[Router] Strategies market context warning: {e}")
+
         return convert_numpy_types(result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

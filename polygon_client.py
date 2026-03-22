@@ -112,6 +112,271 @@ def get_candles_for_mode(symbol: str, mode: str = "swing"):
     
     return data
 
+
+def get_market_context(mode: str = "swing") -> dict:
+    """
+    Fetch SPY + VIX data and compute market-wide context.
+
+    Returns market direction, VIX level, and whether conditions
+    favor bullish or bearish trades. This data helps Claude
+    understand the OVERALL market before analyzing individual stocks.
+
+    Returns:
+        Dict with spy_trend, vix_level, market_bias, etc.
+    """
+    import numpy as np
+
+    context = {
+        "spy": {},
+        "vix": {},
+        "market_bias": "neutral",
+        "market_regime": "unknown",
+        "risk_level": "normal",
+        "favor_puts": False,
+        "favor_calls": False,
+        "warnings": []
+    }
+
+    # --- Fetch SPY data (always daily for market context) ---
+    try:
+        spy_data = get_candles_for_mode("SPY", mode="swing")
+        spy_bars = spy_data.get("results", [])
+
+        if spy_bars and len(spy_bars) >= 200:
+            closes = [bar["c"] for bar in spy_bars]
+            highs = [bar["h"] for bar in spy_bars]
+            lows = [bar["l"] for bar in spy_bars]
+            volumes = [bar.get("v", 0) for bar in spy_bars]
+
+            current = closes[-1]
+            prev_close = closes[-2] if len(closes) > 1 else current
+
+            # Moving averages
+            ma_20 = np.mean(closes[-20:])
+            ma_50 = np.mean(closes[-50:])
+            ma_200 = np.mean(closes[-200:])
+
+            # Daily change
+            daily_change_pct = ((current - prev_close) / prev_close) * 100
+
+            # Weekly change (5 bars)
+            weekly_change_pct = ((current - closes[-6]) / closes[-6]) * 100 if len(closes) >= 6 else 0
+
+            # Monthly change (21 bars)
+            monthly_change_pct = ((current - closes[-22]) / closes[-22]) * 100 if len(closes) >= 22 else 0
+
+            # Distance from 200MA
+            distance_from_200ma_pct = ((current - ma_200) / ma_200) * 100
+
+            # RSI-14 for SPY
+            deltas = np.diff(closes[-15:])
+            gains = np.where(deltas > 0, deltas, 0)
+            losses = np.where(deltas < 0, -deltas, 0)
+            avg_gain = np.mean(gains) if len(gains) > 0 else 0
+            avg_loss = np.mean(losses) if len(losses) > 0 else 0
+            spy_rsi = 100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss > 0 else 100
+
+            # Trend determination
+            above_20ma = current > ma_20
+            above_50ma = current > ma_50
+            above_200ma = current > ma_200
+            ma_20_above_50 = ma_20 > ma_50
+            ma_50_above_200 = ma_50 > ma_200
+
+            bull_count = sum([above_20ma, above_50ma, above_200ma, ma_20_above_50, ma_50_above_200])
+
+            if bull_count >= 4:
+                spy_trend = "BULLISH"
+            elif bull_count >= 3:
+                spy_trend = "SLIGHTLY_BULLISH"
+            elif bull_count <= 1:
+                spy_trend = "BEARISH"
+            elif bull_count <= 2:
+                spy_trend = "SLIGHTLY_BEARISH"
+            else:
+                spy_trend = "NEUTRAL"
+
+            # 52-week high/low
+            high_52w = max(highs[-252:]) if len(highs) >= 252 else max(highs)
+            low_52w = min(lows[-252:]) if len(lows) >= 252 else min(lows)
+            pct_from_52w_high = ((current - high_52w) / high_52w) * 100
+
+            # Average volume comparison
+            avg_vol_20 = np.mean(volumes[-20:]) if volumes else 0
+            vol_ratio = volumes[-1] / avg_vol_20 if avg_vol_20 > 0 else 1.0
+
+            context["spy"] = {
+                "price": round(current, 2),
+                "daily_change_pct": round(daily_change_pct, 2),
+                "weekly_change_pct": round(weekly_change_pct, 2),
+                "monthly_change_pct": round(monthly_change_pct, 2),
+                "trend": spy_trend,
+                "rsi_14": round(float(spy_rsi), 2),
+                "ma_20": round(ma_20, 2),
+                "ma_50": round(ma_50, 2),
+                "ma_200": round(ma_200, 2),
+                "above_20ma": above_20ma,
+                "above_50ma": above_50ma,
+                "above_200ma": above_200ma,
+                "distance_from_200ma_pct": round(distance_from_200ma_pct, 2),
+                "pct_from_52w_high": round(pct_from_52w_high, 2),
+                "volume_ratio": round(float(vol_ratio), 2)
+            }
+        else:
+            context["warnings"].append("SPY: insufficient data (need 200+ bars)")
+
+    except Exception as e:
+        context["warnings"].append(f"SPY fetch failed: {str(e)}")
+
+    # --- Fetch VIX data ---
+    try:
+        # VIX uses I: prefix on Polygon
+        vix_data = get_candles("I:VIX", tf="day", limit=252)
+        vix_bars = vix_data.get("results", [])
+
+        if not vix_bars or len(vix_bars) < 20:
+            # Try without I: prefix
+            vix_data = get_candles("VIX", tf="day", limit=252)
+            vix_bars = vix_data.get("results", [])
+
+        if vix_bars and len(vix_bars) >= 20:
+            vix_closes = [bar["c"] for bar in vix_bars]
+            vix_current = vix_closes[-1]
+            vix_prev = vix_closes[-2] if len(vix_closes) > 1 else vix_current
+
+            vix_ma_20 = np.mean(vix_closes[-20:])
+            vix_daily_change = ((vix_current - vix_prev) / vix_prev) * 100
+
+            # VIX percentile over available data
+            vix_percentile = (sum(1 for v in vix_closes if v <= vix_current) / len(vix_closes)) * 100
+
+            # VIX regime
+            if vix_current >= 30:
+                vix_regime = "EXTREME_FEAR"
+            elif vix_current >= 25:
+                vix_regime = "HIGH_FEAR"
+            elif vix_current >= 20:
+                vix_regime = "ELEVATED"
+            elif vix_current >= 15:
+                vix_regime = "NORMAL"
+            elif vix_current >= 12:
+                vix_regime = "LOW"
+            else:
+                vix_regime = "EXTREME_COMPLACENCY"
+
+            context["vix"] = {
+                "level": round(vix_current, 2),
+                "daily_change_pct": round(vix_daily_change, 2),
+                "ma_20": round(float(vix_ma_20), 2),
+                "above_ma_20": vix_current > vix_ma_20,
+                "percentile": round(float(vix_percentile), 1),
+                "regime": vix_regime,
+                "is_spiking": vix_daily_change > 10,
+                "is_elevated": vix_current >= 20,
+                "is_extreme": vix_current >= 30
+            }
+        else:
+            context["warnings"].append("VIX: insufficient data")
+
+    except Exception as e:
+        context["warnings"].append(f"VIX fetch failed: {str(e)}")
+
+    # --- Compute overall market bias ---
+    spy_info = context.get("spy", {})
+    vix_info = context.get("vix", {})
+
+    spy_trend = spy_info.get("trend", "NEUTRAL")
+    vix_regime = vix_info.get("regime", "NORMAL")
+    vix_level = vix_info.get("level", 18)
+    spy_above_200 = spy_info.get("above_200ma", True)
+    spy_rsi_val = spy_info.get("rsi_14", 50)
+
+    # Market bias logic
+    bull_points = 0
+    bear_points = 0
+
+    # SPY trend
+    if spy_trend in ("BULLISH",):
+        bull_points += 3
+    elif spy_trend in ("SLIGHTLY_BULLISH",):
+        bull_points += 1
+    elif spy_trend in ("BEARISH",):
+        bear_points += 3
+    elif spy_trend in ("SLIGHTLY_BEARISH",):
+        bear_points += 1
+
+    # SPY vs 200MA
+    if spy_above_200:
+        bull_points += 2
+    else:
+        bear_points += 2
+
+    # VIX
+    if vix_regime in ("EXTREME_FEAR", "HIGH_FEAR"):
+        bear_points += 3
+    elif vix_regime == "ELEVATED":
+        bear_points += 1
+    elif vix_regime in ("LOW", "EXTREME_COMPLACENCY"):
+        bull_points += 2
+    elif vix_regime == "NORMAL":
+        bull_points += 1
+
+    # SPY RSI
+    if spy_rsi_val > 70:
+        bear_points += 1  # overbought = risk of pullback
+        context["warnings"].append("SPY RSI overbought (>70) — pullback risk")
+    elif spy_rsi_val < 30:
+        bull_points += 1  # oversold = bounce potential
+        context["warnings"].append("SPY RSI oversold (<30) — bounce potential")
+
+    # Final market bias
+    if bull_points > bear_points + 2:
+        context["market_bias"] = "STRONG_BULLISH"
+        context["favor_calls"] = True
+    elif bull_points > bear_points:
+        context["market_bias"] = "BULLISH"
+        context["favor_calls"] = True
+    elif bear_points > bull_points + 2:
+        context["market_bias"] = "STRONG_BEARISH"
+        context["favor_puts"] = True
+    elif bear_points > bull_points:
+        context["market_bias"] = "BEARISH"
+        context["favor_puts"] = True
+    else:
+        context["market_bias"] = "NEUTRAL"
+
+    # Market regime
+    if vix_regime in ("EXTREME_FEAR",) and not spy_above_200:
+        context["market_regime"] = "CRISIS"
+        context["warnings"].append("CRISIS MODE: VIX extreme + SPY below 200MA. Favor puts or cash.")
+    elif vix_regime in ("HIGH_FEAR", "EXTREME_FEAR"):
+        context["market_regime"] = "HIGH_VOLATILITY"
+        context["warnings"].append("High volatility: use tighter stops, smaller positions")
+    elif vix_regime in ("LOW", "EXTREME_COMPLACENCY") and spy_trend == "BULLISH":
+        context["market_regime"] = "CALM_BULL"
+    elif spy_trend == "BEARISH":
+        context["market_regime"] = "DOWNTREND"
+        context["warnings"].append("Market in downtrend: favor puts or wait for reversal")
+    else:
+        context["market_regime"] = "NORMAL"
+
+    # Risk level
+    if vix_level >= 30:
+        context["risk_level"] = "EXTREME"
+    elif vix_level >= 25:
+        context["risk_level"] = "HIGH"
+    elif vix_level >= 20:
+        context["risk_level"] = "ELEVATED"
+    elif vix_level >= 15:
+        context["risk_level"] = "NORMAL"
+    else:
+        context["risk_level"] = "LOW"
+
+    print(f"[MarketContext] SPY={spy_info.get('price','?')} trend={spy_trend} | VIX={vix_level} regime={vix_regime} | Bias={context['market_bias']}")
+
+    return context
+
+
 # ---------------- Core endpoints ----------------
 
 def get_symbol_lookup(query: str):

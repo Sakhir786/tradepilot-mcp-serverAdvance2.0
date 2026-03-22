@@ -119,7 +119,10 @@ class FullAnalysisResult:
     # AI context
     reasoning: List[str]
     concerns: List[str]
-    
+
+    # Market context (SPY + VIX)
+    market_context: Dict[str, Any] = field(default_factory=dict)
+
     # Raw data for AI
     raw_data: Dict[str, Any] = field(default_factory=dict)
 
@@ -221,22 +224,24 @@ class TradePilotEngine18Layer:
         except ImportError as e:
             print(f"[Engine] Warning: Could not import Layer 18 Brain: {e}")
     
-    def analyze(self, 
+    def analyze(self,
                 ticker: str,
                 candles_data: Dict,
                 options_data: Optional[Dict] = None,
                 mode: TradeMode = TradeMode.SWING,
-                timeframe: str = "day") -> FullAnalysisResult:
+                timeframe: str = "day",
+                market_context: Optional[Dict] = None) -> FullAnalysisResult:
         """
         Run complete 18-layer analysis
-        
+
         Args:
             ticker: Stock symbol (e.g., "SPY")
             candles_data: OHLCV candle data from Polygon.io
             options_data: Optional options chain data for layers 14-17
             mode: SCALP or SWING trading mode
             timeframe: Candle timeframe (day, hour, minute)
-            
+            market_context: Optional market-wide data (SPY trend, VIX level)
+
         Returns:
             FullAnalysisResult with complete analysis
         """
@@ -270,7 +275,7 @@ class TradePilotEngine18Layer:
         
         # Run Layer 18 Brain
         brain_result = self._run_brain_analysis(
-            ticker, brain_input, current_price, mode
+            ticker, brain_input, current_price, mode, market_context
         )
         
         # Build final result
@@ -280,7 +285,8 @@ class TradePilotEngine18Layer:
             mode=mode,
             layer_results=layer_results,
             brain_result=brain_result,
-            start_time=start_time
+            start_time=start_time,
+            market_context=market_context or {}
         )
         
         return result
@@ -632,19 +638,21 @@ class TradePilotEngine18Layer:
         
         return brain_input
     
-    def _run_brain_analysis(self, ticker: str, layer_data: Dict, 
-                           current_price: float, mode: TradeMode) -> Dict:
+    def _run_brain_analysis(self, ticker: str, layer_data: Dict,
+                           current_price: float, mode: TradeMode,
+                           market_context: Optional[Dict] = None) -> Dict:
         """Run Layer 18 Brain analysis"""
         try:
             if self._layer_18_brain:
                 from layer_18_brain_v3_COMPLETE import TradeMode as BrainMode
-                
+
                 brain_mode = BrainMode.SCALP if mode == TradeMode.SCALP else BrainMode.SWING
                 recommendation = self._layer_18_brain.analyze(
                     ticker=ticker,
                     layer_results=layer_data,
                     current_price=current_price,
-                    mode=brain_mode
+                    mode=brain_mode,
+                    market_context=market_context
                 )
                 result = self._layer_18_brain.to_dict(recommendation)
                 
@@ -719,7 +727,8 @@ class TradePilotEngine18Layer:
     
     def _build_analysis_result(self, ticker: str, current_price: float,
                               mode: TradeMode, layer_results: Dict[str, LayerResult],
-                              brain_result: Dict, start_time: datetime) -> FullAnalysisResult:
+                              brain_result: Dict, start_time: datetime,
+                              market_context: Optional[Dict] = None) -> FullAnalysisResult:
         """Build the final analysis result"""
         
         # Count successful layers
@@ -800,7 +809,9 @@ class TradePilotEngine18Layer:
             
             reasoning=brain_result.get('reasoning', []),
             concerns=brain_result.get('concerns', []),
-            
+
+            market_context=market_context or {},
+
             raw_data={
                 'layers': {k: v.data for k, v in layer_results.items()},
                 'brain': brain_result
@@ -844,7 +855,8 @@ class TradePilotEngine18Layer:
             invalidation_below=None,
             invalidation_reason=error,
             reasoning=[f"Error: {error}"],
-            concerns=[error]
+            concerns=[error],
+            market_context={}
         )
     
     def to_json(self, result: FullAnalysisResult) -> str:
@@ -900,13 +912,15 @@ class TradePilotEngine18Layer:
             
             'reasoning': result.reasoning,
             'concerns': result.concerns,
-            
+
+            'market_context': result.market_context,
+
             'layer_data': {
                 'technical': result.technical_layers,
                 'price_action': result.price_action_layers,
                 'options': result.options_layers
             },
-            
+
             'brain_decision': result.brain_decision,
             'raw_data': result.raw_data
         }

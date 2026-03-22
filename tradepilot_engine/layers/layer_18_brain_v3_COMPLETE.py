@@ -206,17 +206,19 @@ class Layer18PureDataAggregator:
         ticker: str,
         layer_results: Dict[str, Any],
         current_price: float,
-        mode: TradeMode = TradeMode.SWING
+        mode: TradeMode = TradeMode.SWING,
+        market_context: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """
         Aggregate all layer data into organized structure for AI.
-        
+
         Args:
             ticker: Stock/ETF symbol
             layer_results: Dict with keys "layer_1" through "layer_17"
             current_price: Current price of the underlying
             mode: Trading mode (SCALP, INTRADAY, SWING, LEAPS)
-            
+            market_context: Optional market-wide data (SPY trend, VIX level)
+
         Returns:
             Dict containing 100% of organized data for AI consumption
         """
@@ -270,7 +272,7 @@ class Layer18PureDataAggregator:
             "greeks": self._extract_greeks(layer_results, current_price),
             
             # ========== DERIVED CALCULATIONS ==========
-            "derived": self._calculate_derived_metrics(layer_results, current_price, mode),
+            "derived": self._calculate_derived_metrics(layer_results, current_price, mode, market_context),
             
             # ========== DATA QUALITY ==========
             "data_quality": self._assess_data_quality(layer_results)
@@ -1548,7 +1550,8 @@ class Layer18PureDataAggregator:
         self,
         layers: Dict,
         current_price: float,
-        mode: TradeMode
+        mode: TradeMode,
+        market_context: Optional[Dict] = None
     ) -> Dict:
         """Calculate derived metrics that AI would need"""
         l1 = layers.get("layer_1", {}) or {}
@@ -1647,9 +1650,103 @@ class Layer18PureDataAggregator:
                 "recommended_dte_min": MODE_CONFIG[mode]["dte_min"] if isinstance(mode, TradeMode) else 7,
                 "recommended_dte_max": MODE_CONFIG[mode]["dte_max"] if isinstance(mode, TradeMode) else 45,
                 "ideal_delta_range": MODE_CONFIG[mode]["ideal_delta_range"] if isinstance(mode, TradeMode) else (0.50, 0.70)
-            }
+            },
+            # Market-Wide Context (SPY + VIX) — helps AI understand if market favors calls or puts
+            "market_alignment": self._derive_market_alignment(
+                bias_direction="bullish" if bull_signals > bear_signals else "bearish" if bear_signals > bull_signals else "neutral",
+                market_context=market_context
+            )
         }
     
+    def _derive_market_alignment(self, bias_direction: str, market_context: Optional[Dict] = None) -> Dict:
+        """
+        Derive how the stock's bias aligns with the overall market.
+
+        This tells Claude:
+        - Does the stock agree with the market? (aligned = stronger signal)
+        - Is the stock fighting the market? (divergent = weaker signal or contrarian)
+        - What should Claude favor? (calls or puts based on combined signals)
+        """
+        if not market_context:
+            return {
+                "available": False,
+                "reason": "No market context data available"
+            }
+
+        mkt_bias = market_context.get("market_bias", "neutral").lower()
+        spy_trend = market_context.get("spy", {}).get("trend", "NEUTRAL")
+        vix_level = market_context.get("vix", {}).get("level")
+        vix_regime = market_context.get("vix", {}).get("regime", "NORMAL")
+        risk_level = market_context.get("risk_level", "NORMAL")
+
+        # Determine market direction simply
+        mkt_is_bullish = "bullish" in mkt_bias.lower()
+        mkt_is_bearish = "bearish" in mkt_bias.lower()
+        stock_is_bullish = bias_direction == "bullish"
+        stock_is_bearish = bias_direction == "bearish"
+
+        # Alignment check
+        if (stock_is_bullish and mkt_is_bullish) or (stock_is_bearish and mkt_is_bearish):
+            alignment = "ALIGNED"
+            alignment_strength = "STRONG"
+            alignment_note = f"Stock ({bias_direction}) agrees with market ({mkt_bias}) — high conviction"
+        elif (stock_is_bullish and mkt_is_bearish) or (stock_is_bearish and mkt_is_bullish):
+            alignment = "DIVERGENT"
+            alignment_strength = "WEAK"
+            alignment_note = f"Stock ({bias_direction}) fights market ({mkt_bias}) — lower conviction, use tighter stops"
+        else:
+            alignment = "PARTIAL"
+            alignment_strength = "MODERATE"
+            alignment_note = f"Stock ({bias_direction}), market ({mkt_bias}) — mixed signals"
+
+        # Final trade suggestion based on BOTH stock + market
+        if stock_is_bullish and mkt_is_bullish:
+            suggested_action = "BUY CALL"
+            conviction = "HIGH"
+        elif stock_is_bearish and mkt_is_bearish:
+            suggested_action = "BUY PUT"
+            conviction = "HIGH"
+        elif stock_is_bullish and mkt_is_bearish:
+            # Stock says call but market says put — stock data primary, but reduce size
+            suggested_action = "BUY CALL"
+            conviction = "LOW"
+        elif stock_is_bearish and mkt_is_bullish:
+            # Stock says put but market says call — stock data primary, but reduce size
+            suggested_action = "BUY PUT"
+            conviction = "LOW"
+        elif mkt_is_bullish:
+            suggested_action = "BUY CALL"
+            conviction = "MODERATE"
+        elif mkt_is_bearish:
+            suggested_action = "BUY PUT"
+            conviction = "MODERATE"
+        else:
+            # Both neutral — use stock's own micro signals
+            if stock_is_bullish:
+                suggested_action = "BUY CALL"
+            elif stock_is_bearish:
+                suggested_action = "BUY PUT"
+            else:
+                suggested_action = "BUY CALL"  # Default to calls in neutral
+            conviction = "LOW"
+
+        return {
+            "available": True,
+            "stock_bias": bias_direction,
+            "market_bias": mkt_bias,
+            "spy_trend": spy_trend,
+            "vix_level": vix_level,
+            "vix_regime": vix_regime,
+            "risk_level": risk_level,
+            "alignment": alignment,
+            "alignment_strength": alignment_strength,
+            "alignment_note": alignment_note,
+            "suggested_action": suggested_action,
+            "conviction": conviction,
+            "favor_calls": suggested_action == "BUY CALL",
+            "favor_puts": suggested_action == "BUY PUT"
+        }
+
     # =========================================================================
     # DATA QUALITY ASSESSMENT
     # =========================================================================
