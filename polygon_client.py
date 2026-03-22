@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 # Load environment variables
 load_dotenv()
 API_KEY = os.getenv("POLYGON_API_KEY")
-BASE_URL = "https://api.polygon.io"
+BASE_URL = "https://api.massive.com"
 # MODE CONFIGURATION - Add near top of file after imports
 MODE_DATA_CONFIG = {
     "scalp": {
