@@ -1655,9 +1655,217 @@ class Layer18PureDataAggregator:
             "market_alignment": self._derive_market_alignment(
                 bias_direction="bullish" if bull_signals > bear_signals else "bearish" if bear_signals > bull_signals else "neutral",
                 market_context=market_context
-            )
+            ),
+            # WHERE CAN PRICE GO — even bullish stocks drop, even bearish stocks rally
+            "price_scenarios": self._build_price_scenarios(layers, current_price)
         }
     
+    def _build_price_scenarios(self, layers: Dict, current_price: float) -> Dict:
+        """
+        Build a complete price map: where can the stock GO from here?
+
+        Even a BULLISH stock can drop — Claude needs to know WHERE it drops to
+        (support levels) so it can buy calls on the dip.
+
+        Even a BEARISH stock can rally — Claude needs to know WHERE it rallies to
+        (resistance levels) so it can buy puts on the rip.
+
+        This synthesizes data from:
+        - Layer 5: SuperTrend, ATR (volatility range)
+        - Layer 6: Pivot highs/lows, order blocks, FVGs
+        - Layer 11: S/R, pivots (daily/weekly/monthly), PDH/PDL
+        - Layer 12: VWAP and bands
+        - Layer 13: Volume Profile POC, VAH, VAL
+        - Layer 14: Expected move from IV
+        - Layer 15: Max pain (options magnet)
+        """
+        if not current_price or current_price <= 0:
+            return {"available": False}
+
+        l5 = layers.get("layer_5", {}) or {}
+        l6 = layers.get("layer_6", {}) or {}
+        l11 = layers.get("layer_11", {}) or {}
+        l12 = layers.get("layer_12", {}) or {}
+        l13 = layers.get("layer_13", {}) or {}
+        l14 = layers.get("layer_14", {}) or {}
+        l15 = layers.get("layer_15", {}) or {}
+
+        # ---- Collect ALL levels BELOW current price (where drops stop) ----
+        levels_below = []
+        levels_above = []
+
+        def add_level(price, name, source, importance):
+            """Add a price level with metadata"""
+            price = safe_float(price)
+            if price and price > 0:
+                dist = ((current_price - price) / current_price) * 100
+                entry = {
+                    "price": round(price, 2),
+                    "name": name,
+                    "source": source,
+                    "importance": importance,
+                    "distance_pct": round(abs(dist), 2)
+                }
+                if price < current_price:
+                    levels_below.append(entry)
+                elif price > current_price:
+                    levels_above.append(entry)
+
+        # --- Layer 5: SuperTrend ---
+        add_level(l5.get("supertrend_value"), "SuperTrend", "L5_Trend", "HIGH")
+
+        # --- Layer 6: Market Structure ---
+        add_level(l6.get("last_pivot_low"), "Pivot Low", "L6_Structure", "HIGH")
+        add_level(l6.get("last_pivot_high"), "Pivot High", "L6_Structure", "HIGH")
+        add_level(l6.get("ob_bull_bottom"), "Bull Order Block Bottom", "L6_Structure", "HIGH")
+        add_level(l6.get("ob_bull_top"), "Bull Order Block Top", "L6_Structure", "MEDIUM")
+        add_level(l6.get("ob_bear_top"), "Bear Order Block Top", "L6_Structure", "HIGH")
+        add_level(l6.get("ob_bear_bottom"), "Bear Order Block Bottom", "L6_Structure", "MEDIUM")
+        add_level(l6.get("fvg_bull_bottom"), "Bull FVG Bottom", "L6_Structure", "MEDIUM")
+        add_level(l6.get("fvg_bull_top"), "Bull FVG Top", "L6_Structure", "MEDIUM")
+        add_level(l6.get("fvg_bear_top"), "Bear FVG Top", "L6_Structure", "MEDIUM")
+        add_level(l6.get("fvg_bear_bottom"), "Bear FVG Bottom", "L6_Structure", "MEDIUM")
+        add_level(l6.get("trend_ema"), "Trend EMA", "L6_Structure", "HIGH")
+
+        # --- Layer 11: S/R Levels ---
+        add_level(l11.get("nearest_support"), "Nearest Support", "L11_SR", "HIGH")
+        add_level(l11.get("nearest_resistance"), "Nearest Resistance", "L11_SR", "HIGH")
+        add_level(l11.get("daily_pp"), "Daily Pivot", "L11_SR", "MEDIUM")
+        add_level(l11.get("daily_s1"), "Daily S1", "L11_SR", "MEDIUM")
+        add_level(l11.get("daily_s2"), "Daily S2", "L11_SR", "HIGH")
+        add_level(l11.get("daily_s3"), "Daily S3", "L11_SR", "LOW")
+        add_level(l11.get("daily_r1"), "Daily R1", "L11_SR", "MEDIUM")
+        add_level(l11.get("daily_r2"), "Daily R2", "L11_SR", "HIGH")
+        add_level(l11.get("daily_r3"), "Daily R3", "L11_SR", "LOW")
+        add_level(l11.get("weekly_pp"), "Weekly Pivot", "L11_SR", "HIGH")
+        add_level(l11.get("weekly_s1"), "Weekly S1", "L11_SR", "HIGH")
+        add_level(l11.get("weekly_r1"), "Weekly R1", "L11_SR", "HIGH")
+        add_level(l11.get("pdh"), "Prev Day High", "L11_SR", "HIGH")
+        add_level(l11.get("pdl"), "Prev Day Low", "L11_SR", "HIGH")
+        add_level(l11.get("pwh"), "Prev Week High", "L11_SR", "MEDIUM")
+        add_level(l11.get("pwl"), "Prev Week Low", "L11_SR", "MEDIUM")
+        add_level(l11.get("pmh"), "Prev Month High", "L11_SR", "MEDIUM")
+        add_level(l11.get("pml"), "Prev Month Low", "L11_SR", "MEDIUM")
+
+        # --- Layer 12: VWAP Bands ---
+        add_level(l12.get("vwap"), "VWAP", "L12_VWAP", "HIGH")
+        add_level(l12.get("vwap_upper_1sd"), "VWAP +1SD", "L12_VWAP", "MEDIUM")
+        add_level(l12.get("vwap_lower_1sd"), "VWAP -1SD", "L12_VWAP", "MEDIUM")
+        add_level(l12.get("vwap_upper_2sd"), "VWAP +2SD", "L12_VWAP", "HIGH")
+        add_level(l12.get("vwap_lower_2sd"), "VWAP -2SD", "L12_VWAP", "HIGH")
+
+        # --- Layer 13: Volume Profile ---
+        add_level(l13.get("poc_price"), "Volume POC", "L13_VP", "HIGH")
+        add_level(l13.get("value_area_high"), "Value Area High", "L13_VP", "HIGH")
+        add_level(l13.get("value_area_low"), "Value Area Low", "L13_VP", "HIGH")
+
+        # --- Layer 15: Max Pain ---
+        add_level(l15.get("max_pain"), "Max Pain", "L15_Options", "HIGH")
+        add_level(l15.get("gamma_wall"), "Gamma Wall", "L15_Options", "MEDIUM")
+
+        # ---- Sort by distance from current price ----
+        levels_below.sort(key=lambda x: x["distance_pct"])
+        levels_above.sort(key=lambda x: x["distance_pct"])
+
+        # ---- Remove duplicates (levels within 0.1% of each other) ----
+        def dedup_levels(levels):
+            if not levels:
+                return levels
+            result = [levels[0]]
+            for lvl in levels[1:]:
+                if abs(lvl["price"] - result[-1]["price"]) / current_price * 100 > 0.1:
+                    result.append(lvl)
+                else:
+                    # Keep the one with higher importance
+                    importance_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
+                    if importance_rank.get(lvl["importance"], 0) > importance_rank.get(result[-1]["importance"], 0):
+                        result[-1] = lvl
+            return result
+
+        levels_below = dedup_levels(levels_below)
+        levels_above = dedup_levels(levels_above)
+
+        # ---- Expected Move (from IV / ATR) ----
+        atr = safe_float(l5.get("atr_value"))
+        atr_pct = safe_float(l5.get("atr_percent"))
+
+        # IV expected moves
+        iv_1sd_pct = safe_float(l14.get("expected_move_1sd_pct"))
+        iv_2sd_pct = safe_float(l14.get("expected_move_2sd_pct"))
+        iv_upper_1sd = safe_float(l14.get("expected_move_upper_1sd"))
+        iv_lower_1sd = safe_float(l14.get("expected_move_lower_1sd"))
+        iv_upper_2sd = safe_float(l14.get("expected_move_upper_2sd"))
+        iv_lower_2sd = safe_float(l14.get("expected_move_lower_2sd"))
+
+        # If no IV expected move, calculate from ATR
+        if not iv_1sd_pct and atr_pct:
+            iv_1sd_pct = atr_pct
+            iv_upper_1sd = round(current_price * (1 + atr_pct / 100), 2)
+            iv_lower_1sd = round(current_price * (1 - atr_pct / 100), 2)
+
+        # ---- Build Scenarios ----
+        # Scenario: Stock drops (even if bullish)
+        first_support = levels_below[0] if levels_below else None
+        second_support = levels_below[1] if len(levels_below) > 1 else None
+        deep_support = levels_below[2] if len(levels_below) > 2 else None
+
+        # Scenario: Stock rallies (even if bearish)
+        first_resistance = levels_above[0] if levels_above else None
+        second_resistance = levels_above[1] if len(levels_above) > 1 else None
+        far_resistance = levels_above[2] if len(levels_above) > 2 else None
+
+        return {
+            "available": True,
+            "current_price": round(current_price, 2),
+
+            # How far can price move?
+            "expected_range": {
+                "atr_daily": atr,
+                "atr_pct": atr_pct,
+                "iv_1sd_move_pct": iv_1sd_pct,
+                "iv_2sd_move_pct": iv_2sd_pct,
+                "probable_high": iv_upper_1sd,
+                "probable_low": iv_lower_1sd,
+                "extreme_high": iv_upper_2sd,
+                "extreme_low": iv_lower_2sd
+            },
+
+            # IF PRICE DROPS — where does it go? (buy calls at these levels)
+            "if_price_drops": {
+                "first_support": first_support,
+                "second_support": second_support,
+                "deep_support": deep_support,
+                "call_zone": first_support["price"] if first_support else None,
+                "call_zone_note": f"If price drops to {first_support['name']} (${first_support['price']}, -{first_support['distance_pct']}%), consider BUY CALL for bounce" if first_support else None
+            },
+
+            # IF PRICE RALLIES — where does it go? (buy puts at these levels)
+            "if_price_rallies": {
+                "first_resistance": first_resistance,
+                "second_resistance": second_resistance,
+                "far_resistance": far_resistance,
+                "put_zone": first_resistance["price"] if first_resistance else None,
+                "put_zone_note": f"If price rallies to {first_resistance['name']} (${first_resistance['price']}, +{first_resistance['distance_pct']}%), consider BUY PUT for rejection" if first_resistance else None
+            },
+
+            # All levels below (sorted by nearest first)
+            "supports_below": levels_below[:8],
+
+            # All levels above (sorted by nearest first)
+            "resistances_above": levels_above[:8],
+
+            # Key insight for Claude
+            "range_context": {
+                "total_supports_found": len(levels_below),
+                "total_resistances_found": len(levels_above),
+                "nearest_support_pct": levels_below[0]["distance_pct"] if levels_below else None,
+                "nearest_resistance_pct": levels_above[0]["distance_pct"] if levels_above else None,
+                "room_to_drop": f"{levels_below[0]['distance_pct']}% to {levels_below[0]['name']}" if levels_below else "no clear support found",
+                "room_to_rally": f"{levels_above[0]['distance_pct']}% to {levels_above[0]['name']}" if levels_above else "no clear resistance found",
+                "tighter_side": "support" if (levels_below and levels_above and levels_below[0]["distance_pct"] < levels_above[0]["distance_pct"]) else "resistance" if (levels_below and levels_above) else "unknown"
+            }
+        }
+
     def _derive_market_alignment(self, bias_direction: str, market_context: Optional[Dict] = None) -> Dict:
         """
         Derive how the stock's bias aligns with the overall market.
