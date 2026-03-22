@@ -47,6 +47,21 @@ def init_db():
             value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS paper_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            total_signals INTEGER DEFAULT 0,
+            trades_taken INTEGER DEFAULT 0,
+            wins INTEGER DEFAULT 0,
+            losses INTEGER DEFAULT 0,
+            timeouts INTEGER DEFAULT 0,
+            win_rate REAL DEFAULT 0,
+            total_pnl REAL DEFAULT 0,
+            full_result TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
         -- Default settings
         INSERT OR IGNORE INTO settings (key, value) VALUES ('default_mode', 'swing');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('theme', 'dark');
@@ -117,6 +132,49 @@ def get_analysis_history(symbol: Optional[str] = None, limit: int = 50) -> List[
 def get_analysis_detail(analysis_id: int) -> Optional[Dict]:
     conn = get_connection()
     row = conn.execute("SELECT * FROM analysis_history WHERE id = ?", (analysis_id,)).fetchone()
+    conn.close()
+    if row:
+        result = dict(row)
+        result["full_result"] = json.loads(result["full_result"]) if result["full_result"] else {}
+        return result
+    return None
+
+
+# --- Paper Trades / Backtests ---
+
+def save_backtest(symbol: str, mode: str, total_signals: int, trades_taken: int,
+                  wins: int, losses: int, timeouts: int, win_rate: float,
+                  total_pnl: float, full_result: str) -> int:
+    conn = get_connection()
+    cursor = conn.execute(
+        "INSERT INTO paper_trades (symbol, mode, total_signals, trades_taken, wins, losses, timeouts, win_rate, total_pnl, full_result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (symbol.upper(), mode, total_signals, trades_taken, wins, losses, timeouts, win_rate, total_pnl, full_result)
+    )
+    conn.commit()
+    row_id = cursor.lastrowid
+    conn.close()
+    return row_id
+
+
+def get_backtests(symbol: Optional[str] = None, limit: int = 50) -> List[Dict]:
+    conn = get_connection()
+    if symbol:
+        rows = conn.execute(
+            "SELECT id, symbol, mode, total_signals, trades_taken, wins, losses, timeouts, win_rate, total_pnl, created_at FROM paper_trades WHERE symbol = ? ORDER BY created_at DESC LIMIT ?",
+            (symbol.upper(), limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, symbol, mode, total_signals, trades_taken, wins, losses, timeouts, win_rate, total_pnl, created_at FROM paper_trades ORDER BY created_at DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_backtest_detail(backtest_id: int) -> Optional[Dict]:
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM paper_trades WHERE id = ?", (backtest_id,)).fetchone()
     conn.close()
     if row:
         result = dict(row)

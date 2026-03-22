@@ -119,6 +119,18 @@ def get_history_detail(analysis_id: int):
         return JSONResponse(status_code=404, content={"error": "Not found"})
     return result
 
+# ---------------- Backtest History API ----------------
+@app.get("/api/backtests")
+def get_backtests(symbol: Optional[str] = None, limit: int = 50):
+    return db.get_backtests(symbol, limit)
+
+@app.get("/api/backtests/{backtest_id}")
+def get_backtest_detail(backtest_id: int):
+    result = db.get_backtest_detail(backtest_id)
+    if not result:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    return result
+
 # ---------------- Settings API ----------------
 @app.get("/api/settings")
 def get_settings():

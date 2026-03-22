@@ -967,6 +967,71 @@ Available for detailed analysis in the `layer_data` and `market_context` fields.
         raise HTTPException(status_code=500, detail=f"AI prompt generation failed: {str(e)}")
 
 
+@router.get("/backtest")
+async def backtest_signal(
+    symbol: str = Query(..., description="Stock symbol (e.g., SPY, AAPL, TSLA)"),
+    mode: TradeModeParam = Query(TradeModeParam.swing, description="Trading mode"),
+    checkpoints: int = Query(10, description="Number of historical checkpoints to test (5-30)", ge=5, le=30),
+    max_hold: int = Query(30, description="Max bars to hold a trade before timeout", ge=5, le=60),
+    min_confidence: str = Query("MODERATE", description="Minimum confidence to take a trade")
+):
+    """
+    Paper Trading Backtest
+
+    Tests the 18-layer engine against historical data:
+    1. Slides a window through 2 years of price history
+    2. At each checkpoint runs the full analysis
+    3. Simulates trades using entry/target/stop levels
+    4. Tracks wins, losses, P&L, and real win rate
+
+    Returns actual performance metrics - not theoretical.
+    """
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from paper_trade import run_backtest
+        result = run_backtest(
+            symbol=symbol.upper(),
+            mode=mode.value,
+            checkpoints=checkpoints,
+            max_hold_bars=max_hold,
+            min_confidence=min_confidence
+        )
+
+        # Save to database
+        try:
+            _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            import database as db
+            db.save_backtest(
+                symbol=symbol.upper(),
+                mode=mode.value,
+                total_signals=result.total_signals,
+                trades_taken=result.trades_taken,
+                wins=result.wins,
+                losses=result.losses,
+                timeouts=result.timeouts,
+                win_rate=result.win_rate,
+                total_pnl=result.total_pnl_pct,
+                full_result=json.dumps({
+                    "by_confidence": result.by_confidence,
+                    "avg_pnl_pct": result.avg_pnl_pct,
+                    "best_trade_pnl": result.best_trade_pnl,
+                    "worst_trade_pnl": result.worst_trade_pnl,
+                    "avg_bars_held": result.avg_bars_held,
+                    "avg_risk_reward": result.avg_risk_reward,
+                    "trades": result.trades
+                }, default=str)
+            )
+        except Exception as e:
+            print(f"[Router] Backtest save warning: {e}")
+
+        from dataclasses import asdict
+        return convert_numpy_types(asdict(result))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backtest failed: {str(e)}")
+
+
 @router.get("/strategies")
 async def get_strategies(
     symbol: str = Query(..., description="Stock symbol (e.g., SPY, AAPL)"),
