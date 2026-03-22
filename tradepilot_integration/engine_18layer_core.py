@@ -26,9 +26,10 @@ import json
 import pandas as pd
 import numpy as np
 
-# Import path setup - adjust based on your deployment
-LAYERS_PATH = os.environ.get('TRADEPILOT_LAYERS_PATH', '/home/mickey/tradepilot-mcp-server/tradepilot_engine/layers')
-PRODUCTION_PATH = os.environ.get('TRADEPILOT_PRODUCTION_PATH', '/home/mickey/tradepilot-mcp-server')
+# Import path setup - auto-detect based on project structure
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LAYERS_PATH = os.environ.get('TRADEPILOT_LAYERS_PATH', os.path.join(_PROJECT_ROOT, 'tradepilot_engine', 'layers'))
+PRODUCTION_PATH = os.environ.get('TRADEPILOT_PRODUCTION_PATH', _PROJECT_ROOT)
 
 sys.path.insert(0, LAYERS_PATH)
 sys.path.insert(0, PRODUCTION_PATH)

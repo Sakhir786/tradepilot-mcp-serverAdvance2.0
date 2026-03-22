@@ -1,6 +1,10 @@
-from fastapi import FastAPI, Query
-from fastapi.responses import JSONResponse, StreamingResponse
+import os
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from typing import Optional
 from polygon_client import (
     get_symbol_lookup,
     get_candles,
@@ -21,6 +25,7 @@ from fastapi.openapi.utils import get_openapi
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
+import database as db
 
 # Add 18-layer integration
 import sys
@@ -53,9 +58,17 @@ if ROUTER_18_AVAILABLE:
     app.include_router(engine18_router)
     print("✅ 18-Layer Engine integrated")
 
-# ---------------- Root ----------------
-@app.get("/")
-def root():
+# Serve static files
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# ---------------- Dashboard ----------------
+@app.get("/", response_class=HTMLResponse)
+def dashboard():
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+@app.get("/api/status")
+def api_status():
     return {
         "message": "TradePilot MCP Server v3.0",
         "status": "running",
@@ -63,6 +76,58 @@ def root():
         "documentation": "/docs",
         "health": "/engine18/health"
     }
+
+# ---------------- Watchlist API ----------------
+class WatchlistAdd(BaseModel):
+    symbol: str
+    notes: str = ""
+
+@app.get("/api/watchlist")
+def get_watchlist():
+    return db.get_watchlist()
+
+@app.post("/api/watchlist")
+def add_watchlist(item: WatchlistAdd):
+    return db.add_to_watchlist(item.symbol, item.notes)
+
+@app.delete("/api/watchlist/{symbol}")
+def delete_watchlist(symbol: str):
+    return db.remove_from_watchlist(symbol)
+
+# ---------------- Analysis History API ----------------
+class HistorySave(BaseModel):
+    symbol: str
+    mode: str = "swing"
+    result: dict = {}
+
+@app.post("/api/history")
+def save_history(item: HistorySave):
+    signal = item.result.get("signal", item.result.get("direction", "N/A"))
+    confidence = item.result.get("confidence", item.result.get("probability", 0))
+    summary = item.result.get("summary", "")
+    row_id = db.save_analysis(item.symbol, item.mode, str(signal), float(confidence) if confidence else 0, summary, item.result)
+    return {"status": "saved", "id": row_id}
+
+@app.get("/api/history")
+def get_history(symbol: Optional[str] = None, limit: int = 50):
+    return db.get_analysis_history(symbol, limit)
+
+@app.get("/api/history/{analysis_id}")
+def get_history_detail(analysis_id: int):
+    result = db.get_analysis_detail(analysis_id)
+    if not result:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    return result
+
+# ---------------- Settings API ----------------
+@app.get("/api/settings")
+def get_settings():
+    return db.get_all_settings()
+
+@app.post("/api/settings/{key}")
+def update_setting(key: str, value: str = Query(...)):
+    db.set_setting(key, value)
+    return {"status": "updated", "key": key, "value": value}
 
 # ---------------- Core endpoints ----------------
 @app.get("/symbol-lookup")

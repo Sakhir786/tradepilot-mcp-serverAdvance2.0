@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradePilot - Trading Intelligence</title>
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-card: #1c2128;
+            --border: #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent: #58a6ff;
+            --green: #3fb950;
+            --red: #f85149;
+            --yellow: #d29922;
+            --purple: #bc8cff;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        .logo {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .logo span { color: var(--text-primary); }
+        .search-box {
+            flex: 1;
+            max-width: 500px;
+            display: flex;
+            gap: 8px;
+        }
+        .search-box input {
+            flex: 1;
+            padding: 8px 14px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+            outline: none;
+        }
+        .search-box input:focus { border-color: var(--accent); }
+        .search-box input::placeholder { color: var(--text-secondary); }
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.15s;
+        }
+        .btn:hover { background: var(--border); }
+        .btn-primary { background: #238636; border-color: #2ea043; }
+        .btn-primary:hover { background: #2ea043; }
+        .btn-accent { background: #1f6feb; border-color: #388bfd; }
+        .btn-accent:hover { background: #388bfd; }
+        .btn-danger { background: #da3633; border-color: #f85149; }
+        .btn-danger:hover { background: #f85149; }
+        .mode-select {
+            padding: 8px 12px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+            outline: none;
+        }
+        .server-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--red);
+        }
+        .status-dot.online { background: var(--green); }
+
+        /* Layout */
+        .main {
+            display: grid;
+            grid-template-columns: 240px 1fr 320px;
+            height: calc(100vh - 53px);
+        }
+
+        /* Sidebar - Watchlist */
+        .sidebar {
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar-header {
+            padding: 14px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .watchlist {
+            flex: 1;
+            overflow-y: auto;
+        }
+        .watchlist-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.1s;
+        }
+        .watchlist-item:hover { background: var(--bg-card); }
+        .watchlist-item.active { background: var(--bg-card); border-left: 2px solid var(--accent); }
+        .watchlist-symbol { font-weight: 600; font-size: 14px; }
+        .watchlist-remove {
+            opacity: 0;
+            color: var(--red);
+            cursor: pointer;
+            font-size: 16px;
+            background: none;
+            border: none;
+        }
+        .watchlist-item:hover .watchlist-remove { opacity: 1; }
+        .add-watchlist {
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 6px;
+        }
+        .add-watchlist input {
+            flex: 1;
+            padding: 6px 10px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-size: 13px;
+            outline: none;
+        }
+
+        /* Center - Chart + Info */
+        .center {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .ticker-bar {
+            padding: 12px 20px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+        .ticker-name { font-size: 22px; font-weight: 700; }
+        .ticker-price { font-size: 20px; font-weight: 600; }
+        .ticker-change { font-size: 14px; font-weight: 500; }
+        .ticker-change.up { color: var(--green); }
+        .ticker-change.down { color: var(--red); }
+        .ticker-meta { font-size: 12px; color: var(--text-secondary); }
+
+        #chart-container {
+            flex: 1;
+            min-height: 400px;
+        }
+
+        /* Bottom panels */
+        .bottom-panels {
+            border-top: 1px solid var(--border);
+            background: var(--bg-secondary);
+            max-height: 280px;
+            overflow-y: auto;
+        }
+        .panel-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+        }
+        .panel-tab {
+            padding: 8px 16px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+        }
+        .panel-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+        .panel-content { padding: 12px 20px; }
+        .news-item {
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .news-title { font-size: 13px; color: var(--text-primary); }
+        .news-meta { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+
+        /* Right Panel - Analysis */
+        .right-panel {
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        .analysis-header {
+            padding: 14px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+        }
+        .signal-card {
+            margin: 12px;
+            padding: 16px;
+            background: var(--bg-card);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        .signal-direction {
+            font-size: 24px;
+            font-weight: 700;
+            text-align: center;
+            padding: 8px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+        .signal-direction.bullish { color: var(--green); background: rgba(63, 185, 80, 0.1); }
+        .signal-direction.bearish { color: var(--red); background: rgba(248, 81, 73, 0.1); }
+        .signal-direction.neutral { color: var(--yellow); background: rgba(210, 153, 34, 0.1); }
+        .confidence-bar {
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            margin: 8px 0;
+            overflow: hidden;
+        }
+        .confidence-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.5s;
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 13px;
+            border-bottom: 1px solid var(--border);
+        }
+        .stat-label { color: var(--text-secondary); }
+        .stat-value { font-weight: 600; }
+        .layer-item {
+            padding: 6px 0;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .layer-tag {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .tag-bullish { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+        .tag-bearish { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+        .tag-neutral { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+
+        .history-item {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border);
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .history-item:hover { background: var(--bg-card); }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-right: 10px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Empty state */
+        .empty-state {
+            padding: 40px 20px;
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-primary); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="logo">Trade<span>Pilot</span></div>
+        <div class="search-box">
+            <input type="text" id="symbolInput" placeholder="Enter symbol (e.g. AAPL, SPY, TSLA)"
+                   onkeydown="if(event.key==='Enter') analyzeSymbol()">
+            <select class="mode-select" id="modeSelect">
+                <option value="swing">SWING (7-45 DTE)</option>
+                <option value="scalp">SCALP (0-2 DTE)</option>
+                <option value="intraday">INTRADAY (0-1 DTE)</option>
+                <option value="leaps">LEAPS (180+ DTE)</option>
+            </select>
+            <button class="btn btn-primary" onclick="analyzeSymbol()">Analyze</button>
+        </div>
+        <div class="server-status">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">Connecting...</span>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="main">
+        <!-- Left Sidebar - Watchlist -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                Watchlist
+                <span id="watchlistCount">0</span>
+            </div>
+            <div class="watchlist" id="watchlistContainer">
+                <div class="empty-state">Add symbols to your watchlist</div>
+            </div>
+            <div class="add-watchlist">
+                <input type="text" id="addWatchlistInput" placeholder="Add symbol..."
+                       onkeydown="if(event.key==='Enter') addToWatchlist()">
+                <button class="btn btn-primary" onclick="addToWatchlist()">+</button>
+            </div>
+        </div>
+
+        <!-- Center - Chart -->
+        <div class="center">
+            <div class="ticker-bar" id="tickerBar" style="display:none;">
+                <span class="ticker-name" id="tickerName">-</span>
+                <span class="ticker-price" id="tickerPrice">-</span>
+                <span class="ticker-change" id="tickerChange">-</span>
+                <span class="ticker-meta" id="tickerMeta"></span>
+            </div>
+            <div id="chart-container">
+                <div class="empty-state" style="padding-top: 150px;">
+                    <p style="font-size: 48px; margin-bottom: 16px;">&#x1F4CA;</p>
+                    <p style="font-size: 18px; color: var(--text-primary); margin-bottom: 8px;">Welcome to TradePilot</p>
+                    <p>Enter a symbol above to start analyzing</p>
+                </div>
+            </div>
+            <div class="bottom-panels" id="bottomPanels" style="display:none;">
+                <div class="panel-tabs">
+                    <div class="panel-tab active" onclick="showPanel('news')">News</div>
+                    <div class="panel-tab" onclick="showPanel('history')">History</div>
+                </div>
+                <div class="panel-content" id="newsPanel"></div>
+                <div class="panel-content" id="historyPanel" style="display:none;"></div>
+            </div>
+        </div>
+
+        <!-- Right Panel - Analysis -->
+        <div class="right-panel">
+            <div class="analysis-header">18-Layer Analysis</div>
+            <div id="analysisContainer">
+                <div class="empty-state">Run analysis to see results</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = '';
+        let chart = null;
+        let candleSeries = null;
+        let volumeSeries = null;
+        let currentSymbol = null;
+
+        // --- Server Health ---
+        async function checkServer() {
+            try {
+                const res = await fetch(API + '/');
+                if (res.ok) {
+                    document.getElementById('statusDot').classList.add('online');
+                    document.getElementById('statusText').textContent = 'Server Online';
+                } else throw new Error();
+            } catch {
+                document.getElementById('statusDot').classList.remove('online');
+                document.getElementById('statusText').textContent = 'Server Offline';
+            }
+        }
+
+        // --- Chart ---
+        function initChart() {
+            const container = document.getElementById('chart-container');
+            container.innerHTML = '';
+            chart = LightweightCharts.createChart(container, {
+                width: container.clientWidth,
+                height: container.clientHeight,
+                layout: {
+                    background: { color: '#0d1117' },
+                    textColor: '#8b949e',
+                },
+                grid: {
+                    vertLines: { color: '#1c2128' },
+                    horzLines: { color: '#1c2128' },
+                },
+                crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+                rightPriceScale: { borderColor: '#30363d' },
+                timeScale: {
+                    borderColor: '#30363d',
+                    timeVisible: true,
+                },
+            });
+            candleSeries = chart.addCandlestickSeries({
+                upColor: '#3fb950',
+                downColor: '#f85149',
+                borderDownColor: '#f85149',
+                borderUpColor: '#3fb950',
+                wickDownColor: '#f85149',
+                wickUpColor: '#3fb950',
+            });
+            volumeSeries = chart.addHistogramSeries({
+                priceFormat: { type: 'volume' },
+                priceScaleId: '',
+            });
+            volumeSeries.priceScale().applyOptions({
+                scaleMargins: { top: 0.8, bottom: 0 },
+            });
+            window.addEventListener('resize', () => {
+                chart.applyOptions({
+                    width: container.clientWidth,
+                    height: container.clientHeight,
+                });
+            });
+        }
+
+        async function loadChart(symbol) {
+            if (!chart) initChart();
+            try {
+                const res = await fetch(API + `/candles?symbol=${symbol}&tf=day&limit=365`);
+                const data = await res.json();
+                if (data.results && data.results.length > 0) {
+                    const candles = data.results.map(r => ({
+                        time: r.t / 1000,
+                        open: r.o,
+                        high: r.h,
+                        low: r.l,
+                        close: r.c,
+                    }));
+                    const volumes = data.results.map(r => ({
+                        time: r.t / 1000,
+                        value: r.v,
+                        color: r.c >= r.o ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)',
+                    }));
+                    candleSeries.setData(candles);
+                    volumeSeries.setData(volumes);
+                    chart.timeScale().fitContent();
+                    const last = data.results[data.results.length - 1];
+                    const prev = data.results.length > 1 ? data.results[data.results.length - 2] : last;
+                    updateTickerBar(symbol, last, prev);
+                }
+            } catch (e) {
+                console.error('Chart load error:', e);
+            }
+        }
+
+        function updateTickerBar(symbol, last, prev) {
+            document.getElementById('tickerBar').style.display = 'flex';
+            document.getElementById('tickerName').textContent = symbol;
+            document.getElementById('tickerPrice').textContent = '$' + last.c.toFixed(2);
+            const change = last.c - prev.c;
+            const changePct = ((change / prev.c) * 100).toFixed(2);
+            const el = document.getElementById('tickerChange');
+            el.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePct}%)`;
+            el.className = 'ticker-change ' + (change >= 0 ? 'up' : 'down');
+            document.getElementById('tickerMeta').textContent = `Vol: ${(last.v / 1e6).toFixed(1)}M`;
+        }
+
+        // --- Analysis ---
+        async function analyzeSymbol() {
+            const symbol = document.getElementById('symbolInput').value.trim().toUpperCase();
+            if (!symbol) return;
+            currentSymbol = symbol;
+
+            document.getElementById('analysisContainer').innerHTML = '<div class="loading"><div class="spinner"></div>Analyzing ' + symbol + '...</div>';
+            document.getElementById('bottomPanels').style.display = 'block';
+
+            loadChart(symbol);
+            loadNews(symbol);
+            loadHistory(symbol);
+
+            const mode = document.getElementById('modeSelect').value;
+            try {
+                const res = await fetch(API + `/engine18/analyze?symbol=${symbol}&mode=${mode}`);
+                const data = await res.json();
+                renderAnalysis(data);
+                // Save to history
+                fetch(API + `/api/history`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol, mode, result: data }),
+                }).catch(() => {});
+            } catch (e) {
+                document.getElementById('analysisContainer').innerHTML =
+                    `<div class="signal-card"><p style="color:var(--red)">Analysis failed: ${e.message}</p><p style="color:var(--text-secondary);margin-top:8px;">Make sure the 18-layer engine is loaded. Check /engine18/health</p></div>`;
+            }
+        }
+
+        function renderAnalysis(data) {
+            const c = document.getElementById('analysisContainer');
+            if (data.detail) {
+                c.innerHTML = `<div class="signal-card"><p style="color:var(--red)">${data.detail}</p></div>`;
+                return;
+            }
+
+            const signal = data.signal || data.direction || 'NEUTRAL';
+            const confidence = data.confidence || data.probability || 0;
+            const isUp = signal.toUpperCase().includes('BULL') || signal.toUpperCase().includes('LONG') || signal.toUpperCase().includes('BUY');
+            const isDown = signal.toUpperCase().includes('BEAR') || signal.toUpperCase().includes('SHORT') || signal.toUpperCase().includes('SELL');
+            const dirClass = isUp ? 'bullish' : isDown ? 'bearish' : 'neutral';
+            const confColor = confidence > 70 ? 'var(--green)' : confidence > 40 ? 'var(--yellow)' : 'var(--red)';
+
+            let html = `
+                <div class="signal-card">
+                    <div class="signal-direction ${dirClass}">${signal}</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Confidence</span>
+                        <span class="stat-value" style="color:${confColor}">${confidence}%</span>
+                    </div>
+                    <div class="confidence-bar">
+                        <div class="confidence-fill" style="width:${confidence}%;background:${confColor}"></div>
+                    </div>`;
+
+            if (data.mode) html += `<div class="stat-row"><span class="stat-label">Mode</span><span class="stat-value">${data.mode}</span></div>`;
+            if (data.entry_price) html += `<div class="stat-row"><span class="stat-label">Entry</span><span class="stat-value">$${data.entry_price}</span></div>`;
+            if (data.stop_loss) html += `<div class="stat-row"><span class="stat-label">Stop Loss</span><span class="stat-value" style="color:var(--red)">$${data.stop_loss}</span></div>`;
+            if (data.target) html += `<div class="stat-row"><span class="stat-label">Target</span><span class="stat-value" style="color:var(--green)">$${data.target}</span></div>`;
+            if (data.risk_reward) html += `<div class="stat-row"><span class="stat-label">Risk/Reward</span><span class="stat-value">${data.risk_reward}</span></div>`;
+
+            html += '</div>';
+
+            // Layer breakdown
+            if (data.layers || data.layer_results) {
+                const layers = data.layers || data.layer_results;
+                html += '<div class="signal-card"><div style="font-size:13px;font-weight:600;margin-bottom:10px;">Layer Breakdown</div>';
+                if (typeof layers === 'object') {
+                    for (const [key, val] of Object.entries(layers)) {
+                        const layerSignal = typeof val === 'object' ? (val.signal || val.direction || val.bias || '-') : val;
+                        const s = String(layerSignal).toUpperCase();
+                        const cls = s.includes('BULL') || s.includes('LONG') ? 'tag-bullish' : s.includes('BEAR') || s.includes('SHORT') ? 'tag-bearish' : 'tag-neutral';
+                        html += `<div class="layer-item"><span>${key}</span><span class="layer-tag ${cls}">${layerSignal}</span></div>`;
+                    }
+                }
+                html += '</div>';
+            }
+
+            // Playbook
+            if (data.playbook || data.recommended_playbook) {
+                const pb = data.playbook || data.recommended_playbook;
+                html += `<div class="signal-card"><div style="font-size:13px;font-weight:600;margin-bottom:10px;">Recommended Playbook</div>`;
+                if (typeof pb === 'object') {
+                    for (const [k, v] of Object.entries(pb)) {
+                        html += `<div class="stat-row"><span class="stat-label">${k}</span><span class="stat-value">${v}</span></div>`;
+                    }
+                } else {
+                    html += `<p style="font-size:13px;">${pb}</p>`;
+                }
+                html += '</div>';
+            }
+
+            // Raw data toggle
+            html += `<div class="signal-card">
+                <div style="font-size:13px;font-weight:600;margin-bottom:10px;cursor:pointer;" onclick="document.getElementById('rawData').style.display=document.getElementById('rawData').style.display==='none'?'block':'none'">
+                    Raw Data (click to toggle)
+                </div>
+                <pre id="rawData" style="display:none;font-size:11px;color:var(--text-secondary);overflow-x:auto;white-space:pre-wrap;max-height:300px;">${JSON.stringify(data, null, 2)}</pre>
+            </div>`;
+
+            c.innerHTML = html;
+        }
+
+        // --- News ---
+        async function loadNews(symbol) {
+            const panel = document.getElementById('newsPanel');
+            panel.innerHTML = '<div class="loading"><div class="spinner"></div>Loading news...</div>';
+            try {
+                const res = await fetch(API + `/news?symbol=${symbol}`);
+                const data = await res.json();
+                if (data.results && data.results.length > 0) {
+                    panel.innerHTML = data.results.slice(0, 10).map(n => `
+                        <div class="news-item">
+                            <div class="news-title">${n.title || 'No title'}</div>
+                            <div class="news-meta">${n.author || ''} - ${n.published_utc ? new Date(n.published_utc).toLocaleDateString() : ''}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    panel.innerHTML = '<div class="empty-state">No news available</div>';
+                }
+            } catch {
+                panel.innerHTML = '<div class="empty-state">Failed to load news</div>';
+            }
+        }
+
+        // --- History ---
+        async function loadHistory(symbol) {
+            const panel = document.getElementById('historyPanel');
+            try {
+                const res = await fetch(API + `/api/history?symbol=${symbol}`);
+                const data = await res.json();
+                if (data.length > 0) {
+                    panel.innerHTML = data.map(h => `
+                        <div class="history-item">
+                            <strong>${h.symbol}</strong> - ${h.signal || 'N/A'} (${h.confidence || 0}%)
+                            <div style="font-size:11px;color:var(--text-secondary)">${h.mode} | ${h.created_at}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    panel.innerHTML = '<div class="empty-state">No analysis history yet</div>';
+                }
+            } catch {
+                panel.innerHTML = '<div class="empty-state">No history available</div>';
+            }
+        }
+
+        function showPanel(name) {
+            document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+            document.getElementById('newsPanel').style.display = name === 'news' ? 'block' : 'none';
+            document.getElementById('historyPanel').style.display = name === 'history' ? 'block' : 'none';
+            event.target.classList.add('active');
+        }
+
+        // --- Watchlist ---
+        async function loadWatchlist() {
+            try {
+                const res = await fetch(API + '/api/watchlist');
+                const data = await res.json();
+                const container = document.getElementById('watchlistContainer');
+                document.getElementById('watchlistCount').textContent = data.length;
+                if (data.length === 0) {
+                    container.innerHTML = '<div class="empty-state">Add symbols to your watchlist</div>';
+                    return;
+                }
+                container.innerHTML = data.map(w => `
+                    <div class="watchlist-item ${w.symbol === currentSymbol ? 'active' : ''}" onclick="quickAnalyze('${w.symbol}')">
+                        <span class="watchlist-symbol">${w.symbol}</span>
+                        <button class="watchlist-remove" onclick="event.stopPropagation();removeFromWatchlist('${w.symbol}')">x</button>
+                    </div>
+                `).join('');
+            } catch {
+                // Server not ready yet
+            }
+        }
+
+        async function addToWatchlist() {
+            const input = document.getElementById('addWatchlistInput');
+            const symbol = input.value.trim().toUpperCase();
+            if (!symbol) return;
+            await fetch(API + '/api/watchlist', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbol }),
+            });
+            input.value = '';
+            loadWatchlist();
+        }
+
+        async function removeFromWatchlist(symbol) {
+            await fetch(API + `/api/watchlist/${symbol}`, { method: 'DELETE' });
+            loadWatchlist();
+        }
+
+        function quickAnalyze(symbol) {
+            document.getElementById('symbolInput').value = symbol;
+            analyzeSymbol();
+        }
+
+        // --- Init ---
+        checkServer();
+        loadWatchlist();
+        setInterval(checkServer, 30000);
+    </script>
+</body>
+</html>
