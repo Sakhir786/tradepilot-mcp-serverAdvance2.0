@@ -248,6 +248,122 @@ async def full_analysis(
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 
+@router.get("/signal")
+async def trade_signal(
+    symbol: str = Query(..., description="Stock symbol (e.g., SPY, AAPL, TSLA)"),
+    mode: TradeModeParam = Query(TradeModeParam.swing, description="Trading mode"),
+):
+    """
+    AI Signal Card — just the trade, nothing else.
+    Full 18-layer analysis + options, returns only what you need to place the trade.
+    """
+    try:
+        engine = get_engine()
+        symbol = symbol.upper()
+
+        trade_mode = {
+            TradeModeParam.scalp: TradeMode.SCALP,
+            TradeModeParam.swing: TradeMode.SWING,
+            TradeModeParam.intraday: TradeMode.INTRADAY,
+            TradeModeParam.leaps: TradeMode.LEAPS,
+        }.get(mode, TradeMode.SWING)
+
+        candles_data = get_candles_for_mode(symbol, mode=mode.value)
+        if not candles_data or "results" not in candles_data or len(candles_data.get("results", [])) < 50:
+            raise HTTPException(status_code=400, detail=f"Insufficient data for {symbol}")
+
+        mode_config = candles_data.get("_mode_config", {})
+        tf = f"{mode_config.get('multiplier', 1)}{mode_config.get('timespan', 'day')[0]}"
+
+        options_data = None
+        try:
+            options_data = get_full_option_chain_snapshot(symbol, limit=100)
+        except Exception:
+            pass
+
+        market_ctx = {}
+        try:
+            market_ctx = get_market_context(mode=mode.value)
+        except Exception:
+            pass
+
+        result = engine.analyze(
+            ticker=symbol,
+            candles_data=candles_data,
+            options_data=options_data,
+            mode=trade_mode,
+            timeframe=tf,
+            market_context=market_ctx,
+        )
+
+        # Build clean signal card
+        if not result.trade_valid or result.action in ("FLAT", "NO_TRADE"):
+            return convert_numpy_types({
+                "signal": "NO_TRADE",
+                "ticker": symbol,
+                "price": result.current_price,
+                "direction": result.direction,
+                "confidence": result.confidence.value,
+                "win_probability": result.win_probability,
+                "reason": result.reasoning[:3] if result.reasoning else ["Conditions not met"],
+                "market": {
+                    "bias": market_ctx.get("market_bias", "unknown"),
+                    "vix": market_ctx.get("vix", {}).get("level"),
+                    "spy": market_ctx.get("spy", {}).get("trend"),
+                },
+            })
+
+        return convert_numpy_types({
+            "signal": result.action,
+            "ticker": symbol,
+            "price": result.current_price,
+            "direction": result.direction,
+            "confidence": result.confidence.value,
+            "win_probability": result.win_probability,
+
+            "trade": {
+                "action": result.action,
+                "strike": result.strike,
+                "strike_type": result.strike_type,
+                "expiry": result.expiry_date,
+                "expiry_dte": result.expiry_dte,
+                "delta": result.delta,
+            },
+
+            "plan": {
+                "entry": result.entry_price,
+                "target": result.target_price,
+                "stop": result.stop_price,
+                "risk_reward": result.risk_reward,
+                "position_size_pct": result.position_size_pct,
+                "contracts": result.contracts_suggested,
+            },
+
+            "invalidation": {
+                "above": result.invalidation_above,
+                "below": result.invalidation_below,
+                "reason": result.invalidation_reason,
+            },
+
+            "reasoning": result.reasoning[:5] if result.reasoning else [],
+            "concerns": result.concerns[:3] if result.concerns else [],
+
+            "market": {
+                "bias": market_ctx.get("market_bias", "unknown"),
+                "vix": market_ctx.get("vix", {}).get("level"),
+                "spy_trend": market_ctx.get("spy", {}).get("trend"),
+                "risk_level": market_ctx.get("risk_level", "unknown"),
+                "favor_calls": market_ctx.get("favor_calls", False),
+                "favor_puts": market_ctx.get("favor_puts", False),
+            },
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Signal failed: {str(e)}")
+
+
 @router.get("/quick")
 async def quick_signal(
     symbol: str = Query(..., description="Stock symbol"),
