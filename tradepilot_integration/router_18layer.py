@@ -959,6 +959,25 @@ if DATA_SOURCE == "ibkr":
                 order_type=req.order_type,
                 limit_price=req.limit_price,
             )
+
+            # Record to DB
+            if "order_id" in result:
+                try:
+                    import database as db
+                    db.save_live_trade(
+                        order_id=result["order_id"],
+                        symbol=req.symbol.upper(),
+                        mode="manual",
+                        action=req.action,
+                        right=req.right,
+                        strike=req.strike,
+                        expiry=req.expiry,
+                        quantity=req.quantity,
+                        entry_price=req.limit_price or result.get("avg_fill_price", 0),
+                    )
+                except Exception as e:
+                    print(f"[Router] Execute DB warning: {e}")
+
             return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Order failed: {str(e)}")
@@ -980,6 +999,27 @@ if DATA_SOURCE == "ibkr":
                 order_type=req.order_type,
                 limit_price=req.limit_price,
             )
+
+            # Record to DB
+            if "order_id" in result:
+                try:
+                    import database as db
+                    first_leg = req.legs[0] if req.legs else None
+                    db.save_live_trade(
+                        order_id=result["order_id"],
+                        symbol=req.symbol.upper(),
+                        mode="manual",
+                        action=req.action,
+                        right=first_leg.right if first_leg else "C",
+                        strike=first_leg.strike if first_leg else 0,
+                        expiry=first_leg.expiry if first_leg else "",
+                        quantity=req.quantity,
+                        entry_price=req.limit_price or 0,
+                        signal_data={"strategy": "spread", "legs": len(req.legs)},
+                    )
+                except Exception as e:
+                    print(f"[Router] Spread DB warning: {e}")
+
             return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Spread order failed: {str(e)}")
@@ -1225,6 +1265,29 @@ if DATA_SOURCE == "ibkr":
                 take_profit_price=req.take_profit_price,
                 stop_loss_price=req.stop_loss_price,
             )
+
+            # Record to DB
+            parent_id = result.get("parent", {}).get("order_id", 0)
+            if parent_id:
+                try:
+                    import database as db
+                    db.save_live_trade(
+                        order_id=parent_id,
+                        symbol=req.symbol.upper(),
+                        mode="manual",
+                        action=req.action,
+                        right=req.right,
+                        strike=req.strike,
+                        expiry=req.expiry,
+                        quantity=req.quantity,
+                        entry_price=req.entry_price,
+                        stop_price=req.stop_loss_price,
+                        target_price=req.take_profit_price,
+                        signal_data={"strategy": "bracket"},
+                    )
+                except Exception as e:
+                    print(f"[Router] Bracket DB warning: {e}")
+
             return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Bracket order failed: {str(e)}")
@@ -1277,7 +1340,18 @@ if DATA_SOURCE == "ibkr":
         """Emergency flatten: close ALL positions with market orders."""
         try:
             from ibkr_client import close_all_positions
-            return close_all_positions(order_type="MKT")
+            result = close_all_positions(order_type="MKT")
+
+            # Close all open trades in DB
+            try:
+                import database as db
+                open_trades = db.get_live_trades(status="OPEN")
+                for trade in open_trades:
+                    db.close_live_trade(trade["order_id"], 0, "EMERGENCY_FLATTEN")
+            except Exception as e:
+                print(f"[Router] Close-all DB warning: {e}")
+
+            return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Close all failed: {str(e)}")
 
@@ -1316,10 +1390,24 @@ if DATA_SOURCE == "ibkr":
         order_id: int,
         timeout: int = Query(60, ge=5, le=300, description="Max seconds to wait"),
     ):
-        """Wait for an order to fill (polls until filled or timeout)."""
+        """Wait for an order to fill, then update DB with fill price."""
         try:
             from ibkr_client import wait_for_fill
-            return wait_for_fill(order_id=order_id, timeout_seconds=timeout)
+            result = wait_for_fill(order_id=order_id, timeout_seconds=timeout)
+
+            # Update DB on fill
+            if result.get("status") == "Filled":
+                try:
+                    import database as db
+                    db.update_live_trade_fill(
+                        order_id=order_id,
+                        fill_price=result.get("avg_fill_price", 0),
+                        status="OPEN",
+                    )
+                except Exception as e:
+                    print(f"[Router] Wait-fill DB warning: {e}")
+
+            return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Wait failed: {str(e)}")
 
