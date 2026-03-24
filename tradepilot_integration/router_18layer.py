@@ -103,9 +103,10 @@ def get_engine() -> TradePilotEngine18Layer:
 
 # Import data client based on DATA_SOURCE config
 try:
-    from config import DATA_SOURCE
+    from config import DATA_SOURCE, EXEC_BROKER
 except ImportError:
     DATA_SOURCE = "polygon"
+    EXEC_BROKER = "polygon"
 
 if DATA_SOURCE == "ibkr":
     try:
@@ -1670,3 +1671,227 @@ if DATA_SOURCE == "ibkr":
             return sync_order_status()
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# TastyTrade Sandbox Execution Endpoints
+# Available when EXEC_BROKER=tastytrade (data still comes from IBKR/Polygon)
+# ---------------------------------------------------------------------------
+
+if EXEC_BROKER == "tastytrade":
+    from pydantic import BaseModel, Field
+    from typing import List as TypingList
+
+    # Reuse models if not already defined (when IBKR block didn't run)
+    if DATA_SOURCE != "ibkr":
+        class OptionOrderRequest(BaseModel):
+            symbol: str = Field(..., description="Underlying symbol (e.g. SPY)")
+            expiry: str = Field(..., description="Expiration YYYYMMDD or YYYY-MM-DD")
+            strike: float = Field(..., description="Strike price")
+            right: str = Field(..., description="C for call, P for put")
+            action: str = Field("BUY", description="BUY or SELL")
+            quantity: int = Field(1, description="Number of contracts", ge=1)
+            order_type: str = Field("Limit", description="Limit or Market")
+            limit_price: Optional[float] = Field(None, description="Limit price")
+
+    class TTSignalExecuteRequest(BaseModel):
+        symbol: str = Field(..., description="Stock symbol to analyze and execute")
+        mode: str = Field("swing", description="Trading mode: scalp, swing, intraday, leaps")
+        quantity: int = Field(1, description="Number of contracts", ge=1)
+        order_type: str = Field("Limit", description="Limit or Market")
+        limit_price: Optional[float] = Field(None, description="Override limit price")
+        dry_run: bool = Field(True, description="If True, validate without placing (default: safe mode)")
+        bracket: bool = Field(False, description="If True, place OTOCO bracket (entry + target + stop)")
+
+    @router.post("/tt/login")
+    async def tt_login_endpoint():
+        """
+        Authenticate with TastyTrade sandbox.
+        Uses TASTYTRADE_USERNAME and TASTYTRADE_PASSWORD from .env
+        """
+        try:
+            from tastytrade_client import tt_login
+            return tt_login()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"TastyTrade login failed: {str(e)}")
+
+    @router.get("/tt/status")
+    async def tt_status_endpoint():
+        """Check TastyTrade connection status and account info."""
+        try:
+            from tastytrade_client import tt_status
+            return tt_status()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @router.get("/tt/balance")
+    async def tt_balance_endpoint():
+        """Get TastyTrade sandbox account balance, buying power, P&L."""
+        try:
+            from tastytrade_client import tt_get_account_balance
+            return tt_get_account_balance()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @router.get("/tt/positions")
+    async def tt_positions_endpoint():
+        """Get all positions on TastyTrade sandbox."""
+        try:
+            from tastytrade_client import tt_get_positions
+            return {"positions": tt_get_positions(), "environment": "sandbox"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @router.get("/tt/orders")
+    async def tt_orders_endpoint():
+        """Get all open/live orders on TastyTrade sandbox."""
+        try:
+            from tastytrade_client import tt_get_orders
+            return {"orders": tt_get_orders(), "environment": "sandbox"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @router.delete("/tt/orders/{order_id}")
+    async def tt_cancel_order_endpoint(order_id: str):
+        """Cancel an order on TastyTrade sandbox."""
+        try:
+            from tastytrade_client import tt_cancel_order
+            return tt_cancel_order(order_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @router.post("/tt/execute")
+    async def tt_execute_option(req: OptionOrderRequest):
+        """
+        Place a single-leg option order on TastyTrade sandbox.
+        Data comes from IBKR/Polygon, execution goes to TastyTrade.
+        """
+        try:
+            from tastytrade_client import tt_place_option_order
+            return tt_place_option_order(
+                symbol=req.symbol,
+                expiry=req.expiry,
+                strike=req.strike,
+                right=req.right,
+                action=req.action,
+                quantity=req.quantity,
+                order_type=req.order_type,
+                limit_price=req.limit_price,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"TastyTrade execute failed: {str(e)}")
+
+    @router.post("/tt/execute/signal")
+    async def tt_execute_signal_endpoint(req: TTSignalExecuteRequest):
+        """
+        AI Signal -> TastyTrade Sandbox Execution
+
+        Full pipeline:
+        1. Pulls data from IBKR/Polygon
+        2. Runs 18-layer engine analysis
+        3. Executes the signal on TastyTrade sandbox
+
+        Default: dry_run=True (safe mode — preview only, no real order).
+        Set dry_run=False to actually place the trade.
+        Set bracket=True for entry + target + stop-loss (OTOCO).
+        """
+        try:
+            from tastytrade_client import tt_execute_signal
+
+            engine = get_engine()
+            symbol = req.symbol.upper()
+
+            trade_mode = {
+                "scalp": TradeMode.SCALP,
+                "swing": TradeMode.SWING,
+                "intraday": TradeMode.INTRADAY,
+                "leaps": TradeMode.LEAPS,
+            }.get(req.mode, TradeMode.SWING)
+
+            # 1. Pull data (from IBKR or Polygon — whatever DATA_SOURCE is set to)
+            candles_data = get_candles_for_mode(symbol, mode=req.mode)
+            if not candles_data or "results" not in candles_data:
+                raise HTTPException(status_code=400, detail=f"No data for {symbol}")
+
+            options_data = None
+            try:
+                options_data = get_full_option_chain_snapshot(symbol, limit=100)
+            except Exception:
+                pass
+
+            market_ctx = {}
+            try:
+                market_ctx = get_market_context(mode=req.mode)
+            except Exception:
+                pass
+
+            mode_config = candles_data.get("_mode_config", {})
+            tf = f"{mode_config.get('multiplier', 1)}{mode_config.get('timespan', 'day')[0]}"
+
+            # 2. Run 18-layer analysis
+            result = engine.analyze(
+                ticker=symbol,
+                candles_data=candles_data,
+                options_data=options_data,
+                mode=trade_mode,
+                timeframe=tf,
+                market_context=market_ctx,
+            )
+
+            # Convert to dict for execution
+            analysis_dict = convert_numpy_types(engine.to_dict(result))
+
+            # 3. Execute on TastyTrade sandbox
+            exec_result = tt_execute_signal(
+                analysis_result=analysis_dict,
+                quantity=req.quantity,
+                order_type=req.order_type,
+                limit_price=req.limit_price,
+                dry_run=req.dry_run,
+                bracket=req.bracket,
+            )
+
+            # Save to DB
+            if not req.dry_run and "error" not in exec_result:
+                try:
+                    from database import save_live_trade
+                    save_live_trade(
+                        order_id=exec_result.get("order_id", 0),
+                        symbol=symbol,
+                        mode=req.mode,
+                        action="BUY",
+                        right=exec_result.get("contract", {}).get("right", "C"),
+                        strike=exec_result.get("contract", {}).get("strike", 0),
+                        expiry=exec_result.get("contract", {}).get("expiry", ""),
+                        quantity=req.quantity,
+                        entry_price=req.limit_price or exec_result.get("engine_signal", {}).get("entry", 0),
+                        stop_price=exec_result.get("engine_signal", {}).get("stop", 0),
+                        target_price=exec_result.get("engine_signal", {}).get("target", 0),
+                        confidence=exec_result.get("engine_signal", {}).get("confidence", ""),
+                        win_probability=exec_result.get("engine_signal", {}).get("win_probability", 0),
+                        signal_data=json.dumps(exec_result),
+                    )
+                except Exception as e:
+                    print(f"[Router] TT trade record warning: {e}")
+
+            return convert_numpy_types({
+                "pipeline": "IBKR_DATA -> ENGINE_18L -> TASTYTRADE_SANDBOX",
+                "data_source": DATA_SOURCE,
+                "execution_broker": "tastytrade",
+                "environment": "sandbox",
+                "dry_run": req.dry_run,
+                "analysis_summary": {
+                    "direction": analysis_dict.get("analysis_summary", {}).get("direction"),
+                    "action": analysis_dict.get("analysis_summary", {}).get("action"),
+                    "confidence": analysis_dict.get("analysis_summary", {}).get("confidence"),
+                    "win_probability": analysis_dict.get("analysis_summary", {}).get("win_probability"),
+                },
+                "execution": exec_result,
+            })
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"TT signal execution failed: {str(e)}")
+
+    print(f"[Router] TastyTrade sandbox endpoints loaded (EXEC_BROKER=tastytrade, DATA_SOURCE={DATA_SOURCE})")
