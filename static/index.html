@@ -595,20 +595,6 @@
                 html += '</div>';
             }
 
-            // Playbook
-            if (data.playbook || data.recommended_playbook) {
-                const pb = data.playbook || data.recommended_playbook;
-                html += `<div class="signal-card"><div style="font-size:13px;font-weight:600;margin-bottom:10px;">Recommended Playbook</div>`;
-                if (typeof pb === 'object') {
-                    for (const [k, v] of Object.entries(pb)) {
-                        html += `<div class="stat-row"><span class="stat-label">${k}</span><span class="stat-value">${v}</span></div>`;
-                    }
-                } else {
-                    html += `<p style="font-size:13px;">${pb}</p>`;
-                }
-                html += '</div>';
-            }
-
             // Raw data toggle
             html += `<div class="signal-card">
                 <div style="font-size:13px;font-weight:600;margin-bottom:10px;cursor:pointer;" onclick="document.getElementById('rawData').style.display=document.getElementById('rawData').style.display==='none'?'block':'none'">

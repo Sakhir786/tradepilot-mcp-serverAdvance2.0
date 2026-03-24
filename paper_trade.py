@@ -48,8 +48,6 @@ class PaperTrade:
     action: str             # BUY_CALL / BUY_PUT / FLAT
     confidence: str         # SUPREME / EXCELLENT / STRONG / MODERATE / WEAK
     win_probability: float
-    playbook: str
-
     entry_price: float
     target_price: float
     stop_price: float
@@ -320,7 +318,6 @@ def run_backtest(
                 action=result.action,
                 confidence=conf_str,
                 win_probability=result.win_probability,
-                playbook=result.matched_playbook or "None",
                 entry_price=result.entry_price if result.entry_price > 0 else current_price,
                 target_price=result.target_price,
                 stop_price=result.stop_price,
@@ -346,8 +343,7 @@ def run_backtest(
             trades.append(trade)
 
             icon = "WIN" if trade.outcome == "WIN" else "LOSS" if trade.outcome == "LOSS" else "TIMEOUT"
-            print(f"    -> {result.action} | {conf_str} ({result.win_probability:.0f}%) | "
-                  f"Playbook: {trade.playbook}")
+            print(f"    -> {result.action} | {conf_str} ({result.win_probability:.0f}%)")
             print(f"       Entry: ${trade.entry_price:.2f} | Target: ${trade.target_price:.2f} | "
                   f"Stop: ${trade.stop_price:.2f} | R:R {trade.risk_reward:.1f}")
             print(f"       Result: {icon} | Exit: ${trade.exit_price:.2f} | "

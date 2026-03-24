@@ -8,7 +8,7 @@ This integration file does NOT modify any layer code - it imports and orchestrat
 Features:
 - Full 18-layer analysis pipeline
 - SCALP (0-2 DTE) and SWING (7-45 DTE) modes
-- 14 high-probability playbooks (7 bullish + 7 bearish)
+- Pure data aggregation for AI-driven decisions
 - Real-time options chain integration
 - Risk-adjusted position sizing
 - AI-ready JSON output for Claude/GPT integration
@@ -90,11 +90,6 @@ class FullAnalysisResult:
     action: str  # BUY_CALL, BUY_PUT, FLAT
     confidence: SignalStrength
     win_probability: float
-    
-    # Playbook info
-    matched_playbook: Optional[str]
-    playbook_id: Optional[int]
-    playbook_details: Dict[str, Any]
     
     # Options recommendation
     strike: float
@@ -714,7 +709,6 @@ class TradePilotEngine18Layer:
                 'confidence': 'MODERATE' if win_prob >= 75 else 'WEAK',
                 'win_probability': min(win_prob, 85)
             },
-            'playbooks': {'best': None, 'all_checked': []},
             'option': {
                 'strike': current_price,
                 'strike_type': 'ATM',
@@ -741,8 +735,6 @@ class TradePilotEngine18Layer:
         execution_info = brain_result.get('execution', {})
         position_info = brain_result.get('position', {})
         risk_info = brain_result.get('risk', {})
-        playbook_info = brain_result.get('playbooks', {})
-        
         # Determine confidence level
         win_prob = trade_info.get('win_probability', 50)
         if win_prob >= 90:
@@ -755,11 +747,6 @@ class TradePilotEngine18Layer:
             confidence = SignalStrength.MODERATE
         else:
             confidence = SignalStrength.WEAK
-        
-        # Get matched playbook info
-        best_playbook = playbook_info.get('best')
-        matched_playbook = best_playbook.get('name') if best_playbook else None
-        playbook_id = best_playbook.get('id') if best_playbook else None
         
         # Calculate expiry date
         dte = option_info.get('expiry_dte', 30)
@@ -785,10 +772,6 @@ class TradePilotEngine18Layer:
             action=trade_info.get('action', 'FLAT'),
             confidence=confidence,
             win_probability=win_prob,
-            
-            matched_playbook=matched_playbook,
-            playbook_id=playbook_id,
-            playbook_details=playbook_info,
             
             strike=option_info.get('strike', current_price),
             strike_type=option_info.get('strike_type', 'ATM'),
@@ -837,9 +820,6 @@ class TradePilotEngine18Layer:
             action='FLAT',
             confidence=SignalStrength.NO_TRADE,
             win_probability=0,
-            matched_playbook=None,
-            playbook_id=None,
-            playbook_details={},
             strike=0,
             strike_type='N/A',
             delta=0,
@@ -879,12 +859,6 @@ class TradePilotEngine18Layer:
                 'action': result.action,
                 'confidence': result.confidence.value,
                 'win_probability': result.win_probability
-            },
-            
-            'playbook': {
-                'matched': result.matched_playbook,
-                'id': result.playbook_id,
-                'details': result.playbook_details
             },
             
             'option_recommendation': {
@@ -941,9 +915,6 @@ class TradePilotEngine18Layer:
             lines.append(f"🚀 RECOMMENDATION: {result.action}")
             lines.append(f"📊 Direction: {result.direction}")
             lines.append(f"🏆 Confidence: {result.confidence.value} ({result.win_probability:.1f}%)")
-            
-            if result.matched_playbook:
-                lines.append(f"📖 Playbook: {result.matched_playbook}")
             
             lines.append("")
             lines.append("📈 OPTION DETAILS:")

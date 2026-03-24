@@ -6,7 +6,6 @@ FastAPI endpoints for the complete 18-layer trading engine.
 Endpoints:
 - /engine18/analyze - Full 18-layer analysis
 - /engine18/quick - Quick signal check
-- /engine18/playbooks - List all playbooks
 - /engine18/scan - Scan multiple tickers
 - /engine18/compare - Compare setups
 - /engine18/health - System health check
@@ -152,7 +151,6 @@ async def full_analysis(
     - Master Brain decision (Layer 18)
     
     Returns comprehensive trade recommendation with:
-    - Playbook matching (14 high-probability patterns)
     - Option strike/expiry recommendations
     - Entry/Target/Stop levels
     - Risk management parameters
@@ -290,7 +288,6 @@ async def quick_signal(
                 "delta": result.delta,
                 "expiry_dte": result.expiry_dte
             },
-            "playbook": result.matched_playbook,
             "market_context": {
                 "market_bias": market_ctx.get("market_bias", "unknown"),
                 "vix_level": market_ctx.get("vix", {}).get("level"),
@@ -317,7 +314,7 @@ async def scan_tickers(
     """
     Multi-Ticker Scanner - PURE DATA OUTPUT
     Returns key signals from all layers for each ticker.
-    NO filtering, NO playbook blocking - AI decides what to trade.
+    NO filtering, NO blocking - AI decides what to trade.
     """
     try:
         engine = get_engine()
@@ -475,7 +472,6 @@ async def compare_setups(
                         "direction": result.direction,
                         "confidence": result.confidence.value,
                         "win_probability": result.win_probability,
-                        "playbook": result.matched_playbook,
                         "option": {
                             "strike": result.strike,
                             "delta": result.delta,
@@ -529,197 +525,6 @@ async def compare_setups(
         raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
 
 
-@router.get("/playbooks")
-async def list_playbooks():
-    """
-    📖 List All Playbooks
-    
-    Returns the 14 high-probability playbooks:
-    - 7 Bullish patterns (for CALLS)
-    - 7 Bearish patterns (for PUTS)
-    
-    Each playbook includes:
-    - Pattern description
-    - Required conditions
-    - Expected win rate range
-    """
-    return convert_numpy_types({
-        "total_playbooks": 14,
-        "bullish_playbooks": [
-            {
-                "id": 1,
-                "name": "Liquidity Sweep + BOS",
-                "description": "Smart money grabs sell-side liquidity then breaks structure bullish",
-                "win_rate_range": "85-95%",
-                "key_conditions": [
-                    "Bullish liquidity grab detected (Layer 7)",
-                    "Bullish BOS confirmed (Layer 6)",
-                    "Volume spike on sweep"
-                ],
-                "best_for": "Strong reversal plays after stops are taken"
-            },
-            {
-                "id": 2,
-                "name": "CHoCH Reversal",
-                "description": "Change of Character confirms trend reversal",
-                "win_rate_range": "82-92%",
-                "key_conditions": [
-                    "Bullish CHoCH detected (Layer 6)",
-                    "RSI divergence present (Layer 3)",
-                    "Near support level (Layer 11)"
-                ],
-                "best_for": "Catching bottoms with structure confirmation"
-            },
-            {
-                "id": 3,
-                "name": "Trend Continuation",
-                "description": "Riding established bullish momentum",
-                "win_rate_range": "80-90%",
-                "key_conditions": [
-                    "SuperTrend bullish (Layer 5)",
-                    "ADX > 25 (Layer 5)",
-                    "MTF alignment > 70% (Layer 9)"
-                ],
-                "best_for": "Momentum continuation in strong trends"
-            },
-            {
-                "id": 4,
-                "name": "FVG Fill + Rejection",
-                "description": "Fair Value Gap filled with bullish rejection",
-                "win_rate_range": "81-88%",
-                "key_conditions": [
-                    "Bullish FVG detected (Layer 6)",
-                    "Price in FVG zone",
-                    "Bullish rejection candle (Layer 10)"
-                ],
-                "best_for": "Precision entries at institutional levels"
-            },
-            {
-                "id": 5,
-                "name": "Order Block Bounce",
-                "description": "Price taps bullish order block and bounces",
-                "win_rate_range": "79-87%",
-                "key_conditions": [
-                    "Bullish OB detected (Layer 6)",
-                    "Reaction candle at OB (Layer 10)",
-                    "Volume confirmation (Layer 2)"
-                ],
-                "best_for": "Entries at institutional demand zones"
-            },
-            {
-                "id": 6,
-                "name": "Divergence + Structure",
-                "description": "Bullish divergence with structure confirmation",
-                "win_rate_range": "80-88%",
-                "key_conditions": [
-                    "Bullish divergence (Layer 3)",
-                    "BOS confirms (Layer 6)",
-                    "Near support (Layer 11)"
-                ],
-                "best_for": "High-probability reversals"
-            },
-            {
-                "id": 7,
-                "name": "VWAP Reclaim",
-                "description": "Institutional VWAP level reclaimed with volume",
-                "win_rate_range": "77-85%",
-                "key_conditions": [
-                    "Price crosses above VWAP (Layer 12)",
-                    "Volume spike on reclaim (Layer 2)",
-                    "Trend support (Layer 5)"
-                ],
-                "best_for": "Intraday momentum plays"
-            }
-        ],
-        "bearish_playbooks": [
-            {
-                "id": 8,
-                "name": "Liquidity Sweep + BOS Bearish",
-                "description": "Smart money grabs buy-side liquidity then breaks structure bearish",
-                "win_rate_range": "85-95%",
-                "key_conditions": [
-                    "Bearish liquidity grab detected (Layer 7)",
-                    "Bearish BOS confirmed (Layer 6)",
-                    "Volume spike on sweep"
-                ],
-                "best_for": "Strong reversal plays after stops are taken"
-            },
-            {
-                "id": 9,
-                "name": "CHoCH Reversal Bearish",
-                "description": "Change of Character confirms bearish reversal",
-                "win_rate_range": "82-92%",
-                "key_conditions": [
-                    "Bearish CHoCH detected (Layer 6)",
-                    "Bearish divergence present (Layer 3)",
-                    "Near resistance level (Layer 11)"
-                ],
-                "best_for": "Catching tops with structure confirmation"
-            },
-            {
-                "id": 10,
-                "name": "Trend Continuation Bearish",
-                "description": "Riding established bearish momentum",
-                "win_rate_range": "80-90%",
-                "key_conditions": [
-                    "SuperTrend bearish (Layer 5)",
-                    "ADX > 25 (Layer 5)",
-                    "MTF alignment bearish (Layer 9)"
-                ],
-                "best_for": "Momentum continuation in downtrends"
-            },
-            {
-                "id": 11,
-                "name": "FVG Fill + Rejection Bearish",
-                "description": "Fair Value Gap filled with bearish rejection",
-                "win_rate_range": "81-88%",
-                "key_conditions": [
-                    "Bearish FVG detected (Layer 6)",
-                    "Price in FVG zone",
-                    "Bearish rejection candle (Layer 10)"
-                ],
-                "best_for": "Precision entries at institutional levels"
-            },
-            {
-                "id": 12,
-                "name": "Order Block Bounce Bearish",
-                "description": "Price taps bearish order block and drops",
-                "win_rate_range": "79-87%",
-                "key_conditions": [
-                    "Bearish OB detected (Layer 6)",
-                    "Reaction candle at OB (Layer 10)",
-                    "Volume confirmation (Layer 2)"
-                ],
-                "best_for": "Entries at institutional supply zones"
-            },
-            {
-                "id": 13,
-                "name": "Divergence + Structure Bearish",
-                "description": "Bearish divergence with structure confirmation",
-                "win_rate_range": "80-88%",
-                "key_conditions": [
-                    "Bearish divergence (Layer 3)",
-                    "BOS confirms (Layer 6)",
-                    "Near resistance (Layer 11)"
-                ],
-                "best_for": "High-probability reversals"
-            },
-            {
-                "id": 14,
-                "name": "VWAP Rejection",
-                "description": "Institutional VWAP level rejected with volume",
-                "win_rate_range": "77-85%",
-                "key_conditions": [
-                    "Price rejects below VWAP (Layer 12)",
-                    "Volume spike on rejection (Layer 2)",
-                    "Trend resistance (Layer 5)"
-                ],
-                "best_for": "Intraday momentum plays"
-            }
-        ]
-    })
-
-
 @router.get("/layers")
 async def list_layers():
     """
@@ -744,7 +549,7 @@ async def list_layers():
             },
             "decision": {
                 "layers": [18],
-                "description": "Master Brain with playbook matching"
+                "description": "Master Brain - pure data aggregation for AI"
             }
         },
         "layer_details": [
@@ -765,7 +570,7 @@ async def list_layers():
             {"id": 15, "name": "Gamma & Max Pain", "outputs": ["Max Pain", "GEX", "Pin Risk"]},
             {"id": 16, "name": "Put/Call Ratio", "outputs": ["PCR current", "PCR trend", "Volume imbalance"]},
             {"id": 17, "name": "Greeks Analysis", "outputs": ["Best strike selection", "Delta/Gamma/Theta/Vega analysis"]},
-            {"id": 18, "name": "Master Brain", "outputs": ["Playbook matching", "Trade recommendation", "Risk management"]}
+            {"id": 18, "name": "Master Brain", "outputs": ["Data aggregation", "Trade recommendation", "Risk management"]}
         ]
     })
 
@@ -854,7 +659,6 @@ async def engine_health():
             "price_action_layers": [k for k in available_layers if 11 <= int(k.split("_")[1]) <= 13],
             "options_layers": [k for k in available_layers if int(k.split("_")[1]) >= 14],
             "brain_available": brain_available,
-            "playbooks_count": 14,
             "configuration": engine.config
         })
     
@@ -929,8 +733,6 @@ async def get_ai_prompt(
 - **Direction**: {result.direction}
 - **Action**: {result.action}
 - **Confidence**: {result.confidence.value} ({result.win_probability:.1f}%)
-- **Matched Playbook**: {result.matched_playbook or 'None'}
-
 ### Option Recommendation
 - Strike: ${result.strike:.2f} ({result.strike_type})
 - Delta: {result.delta:.2f}
