@@ -38,6 +38,13 @@ except ImportError as e:
     print(f"[Main] 18-layer router not available: {e}")
     ROUTER_18_AVAILABLE = False
 
+try:
+    from router_chat import router as chat_router
+    CHAT_AVAILABLE = True
+except ImportError as e:
+    print(f"[Main] Chat router not available: {e}")
+    CHAT_AVAILABLE = False
+
 app = FastAPI(
     title="TradePilot MCP Server",
     description="18-layer trading intelligence engine powered by Polygon.io",
@@ -57,6 +64,11 @@ app.add_middleware(
 if ROUTER_18_AVAILABLE:
     app.include_router(engine18_router)
     print("✅ 18-Layer Engine integrated")
+
+# Include chat routes
+if CHAT_AVAILABLE:
+    app.include_router(chat_router)
+    print("✅ AI Chat integrated")
 
 # Serve static files
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")

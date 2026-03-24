@@ -91,6 +91,27 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_live_trades_symbol ON live_trades(symbol);
         CREATE INDEX IF NOT EXISTS idx_live_trades_status ON live_trades(status);
 
+        -- Chat conversations
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id TEXT PRIMARY KEY,
+            title TEXT DEFAULT 'New Chat',
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            tool_used TEXT DEFAULT '',
+            tool_data TEXT DEFAULT '{}',
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (session_id) REFERENCES chat_sessions(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
+
         -- Default settings
         INSERT OR IGNORE INTO settings (key, value) VALUES ('default_mode', 'swing');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('theme', 'dark');
@@ -356,6 +377,84 @@ def get_all_settings() -> Dict[str, str]:
     rows = conn.execute("SELECT key, value FROM settings").fetchall()
     conn.close()
     return {r["key"]: r["value"] for r in rows}
+
+
+# --- Chat Sessions ---
+
+def create_chat_session(session_id: str, title: str = "New Chat") -> Dict:
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO chat_sessions (id, title) VALUES (?, ?)",
+        (session_id, title)
+    )
+    conn.commit()
+    conn.close()
+    return {"id": session_id, "title": title}
+
+
+def get_chat_sessions(limit: int = 50) -> List[Dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM chat_sessions ORDER BY updated_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_chat_session_title(session_id: str, title: str):
+    conn = get_connection()
+    conn.execute(
+        "UPDATE chat_sessions SET title = ?, updated_at = datetime('now') WHERE id = ?",
+        (title, session_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def save_chat_message(session_id: str, role: str, content: str,
+                      tool_used: str = "", tool_data: dict = None) -> int:
+    conn = get_connection()
+    cursor = conn.execute(
+        "INSERT INTO chat_messages (session_id, role, content, tool_used, tool_data) VALUES (?, ?, ?, ?, ?)",
+        (session_id, role, content, tool_used, json.dumps(tool_data or {}, default=str))
+    )
+    conn.execute(
+        "UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?",
+        (session_id,)
+    )
+    conn.commit()
+    row_id = cursor.lastrowid
+    conn.close()
+    return row_id
+
+
+def get_chat_messages(session_id: str, limit: int = 100) -> List[Dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC LIMIT ?",
+        (session_id, limit)
+    ).fetchall()
+    conn.close()
+    results = []
+    for r in rows:
+        d = dict(r)
+        if d.get("tool_data"):
+            try:
+                d["tool_data"] = json.loads(d["tool_data"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        results.append(d)
+    return results
+
+
+def delete_chat_session(session_id: str) -> bool:
+    conn = get_connection()
+    conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+    cursor = conn.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
+    conn.commit()
+    deleted = cursor.rowcount > 0
+    conn.close()
+    return deleted
 
 
 # Initialize on import
