@@ -36,3 +36,6 @@ aiofiles==23.2.1
 # Integration System Dependencies (18-Layer)
 aiohttp==3.9.1
 orjson==3.9.10
+
+# IBKR Gateway (optional — only needed when DATA_SOURCE=ibkr)
+ib_insync==0.9.86

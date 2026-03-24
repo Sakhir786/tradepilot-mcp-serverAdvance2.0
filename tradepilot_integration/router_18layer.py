@@ -101,35 +101,55 @@ def get_engine() -> TradePilotEngine18Layer:
     return _engine
 
 
-# Import polygon client from production (adjust path)
+# Import data client based on DATA_SOURCE config
 try:
-    from polygon_client import (
-        get_candles_for_mode,
-        get_candles,
-        get_option_chain_snapshot,
-        get_full_option_chain_snapshot,
-        get_ticker_details,
-        get_market_context
-    )
+    from config import DATA_SOURCE
 except ImportError:
-    # Fallback imports
-    def get_candles(symbol, tf="day", limit=730):
-        return {"error": "Polygon client not available"}
+    DATA_SOURCE = "polygon"
 
-    def get_candles_for_mode(symbol, mode="swing"):
-        return {"error": "Polygon client not available"}
+if DATA_SOURCE == "ibkr":
+    try:
+        from ibkr_client import (
+            get_candles_for_mode,
+            get_candles,
+            get_option_chain_snapshot,
+            get_full_option_chain_snapshot,
+            get_ticker_details,
+            get_market_context,
+        )
+        print("[Router] Data source: IBKR")
+    except ImportError as e:
+        raise ImportError(f"IBKR client not available (DATA_SOURCE=ibkr): {e}")
+else:
+    try:
+        from polygon_client import (
+            get_candles_for_mode,
+            get_candles,
+            get_option_chain_snapshot,
+            get_full_option_chain_snapshot,
+            get_ticker_details,
+            get_market_context,
+        )
+        print("[Router] Data source: Polygon")
+    except ImportError:
+        # Fallback stubs
+        def get_candles(symbol, tf="day", limit=730):
+            return {"error": "Polygon client not available"}
 
-    def get_option_chain_snapshot(symbol, cursor=None, limit=50):
-        return {"error": "Polygon client not available"}
+        def get_candles_for_mode(symbol, mode="swing"):
+            return {"error": "Polygon client not available"}
 
-    def get_full_option_chain_snapshot(symbol, limit=100):
-        return {"error": "Polygon client not available"}
+        def get_option_chain_snapshot(symbol, cursor=None, limit=50):
+            return {"error": "Polygon client not available"}
 
-    def get_ticker_details(symbol):
-        return {"error": "Polygon client not available"}
+        def get_full_option_chain_snapshot(symbol, limit=100):
+            return {"error": "Polygon client not available"}
 
-    def get_market_context(mode="swing"):
-        return {"market_bias": "neutral", "warnings": ["Polygon client not available"]}
+        def get_ticker_details(symbol):
+            return {"error": "Polygon client not available"}
+
+        def get_market_context(mode="swing"):
+            return {"market_bias": "neutral", "warnings": ["Polygon client not available"]}
 
 
 @router.get("/analyze")
