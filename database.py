@@ -62,6 +62,35 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS live_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER,
+            symbol TEXT NOT NULL,
+            mode TEXT DEFAULT 'swing',
+            action TEXT NOT NULL,
+            right TEXT NOT NULL,
+            strike REAL NOT NULL,
+            expiry TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            entry_price REAL DEFAULT 0,
+            exit_price REAL DEFAULT 0,
+            stop_price REAL DEFAULT 0,
+            target_price REAL DEFAULT 0,
+            status TEXT DEFAULT 'PENDING',
+            pnl REAL DEFAULT 0,
+            pnl_pct REAL DEFAULT 0,
+            close_reason TEXT DEFAULT '',
+            confidence TEXT DEFAULT '',
+            win_probability REAL DEFAULT 0,
+            signal_data TEXT DEFAULT '',
+            entry_time TEXT DEFAULT (datetime('now')),
+            exit_time TEXT,
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_live_trades_symbol ON live_trades(symbol);
+        CREATE INDEX IF NOT EXISTS idx_live_trades_status ON live_trades(status);
+
         -- Default settings
         INSERT OR IGNORE INTO settings (key, value) VALUES ('default_mode', 'swing');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('theme', 'dark');
@@ -181,6 +210,129 @@ def get_backtest_detail(backtest_id: int) -> Optional[Dict]:
         result["full_result"] = json.loads(result["full_result"]) if result["full_result"] else {}
         return result
     return None
+
+
+# --- Live Trades ---
+
+def save_live_trade(order_id: int, symbol: str, mode: str, action: str,
+                    right: str, strike: float, expiry: str, quantity: int,
+                    entry_price: float = 0, stop_price: float = 0,
+                    target_price: float = 0, confidence: str = "",
+                    win_probability: float = 0, signal_data: dict = None) -> int:
+    """Record a new live trade execution."""
+    conn = get_connection()
+    cursor = conn.execute(
+        """INSERT INTO live_trades
+           (order_id, symbol, mode, action, right, strike, expiry, quantity,
+            entry_price, stop_price, target_price, status, confidence,
+            win_probability, signal_data)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)""",
+        (order_id, symbol.upper(), mode, action, right, strike, expiry,
+         quantity, entry_price, stop_price, target_price, confidence,
+         win_probability, json.dumps(signal_data or {}, default=str))
+    )
+    conn.commit()
+    row_id = cursor.lastrowid
+    conn.close()
+    return row_id
+
+
+def update_live_trade_fill(order_id: int, fill_price: float, status: str = "FILLED") -> bool:
+    """Update trade with fill price after execution."""
+    conn = get_connection()
+    cursor = conn.execute(
+        "UPDATE live_trades SET entry_price = ?, status = ?, updated_at = datetime('now') WHERE order_id = ? AND status = 'PENDING'",
+        (fill_price, status, order_id)
+    )
+    conn.commit()
+    updated = cursor.rowcount > 0
+    conn.close()
+    return updated
+
+
+def close_live_trade(order_id: int, exit_price: float, close_reason: str = "MANUAL") -> bool:
+    """Close a live trade and calculate P&L."""
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM live_trades WHERE order_id = ?", (order_id,)).fetchone()
+    if not row:
+        conn.close()
+        return False
+
+    entry = row["entry_price"]
+    qty = row["quantity"]
+    action = row["action"]
+
+    # P&L calc: long = (exit - entry), short = (entry - exit), per contract * 100
+    if action in ("BUY",):
+        pnl = (exit_price - entry) * qty * 100
+    else:
+        pnl = (entry - exit_price) * qty * 100
+
+    pnl_pct = ((exit_price - entry) / entry * 100) if entry > 0 else 0
+    if action == "SELL":
+        pnl_pct = -pnl_pct
+
+    conn.execute(
+        """UPDATE live_trades
+           SET exit_price = ?, pnl = ?, pnl_pct = ?, status = 'CLOSED',
+               close_reason = ?, exit_time = datetime('now'), updated_at = datetime('now')
+           WHERE order_id = ?""",
+        (exit_price, round(pnl, 2), round(pnl_pct, 2), close_reason, order_id)
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_live_trades(status: Optional[str] = None, symbol: Optional[str] = None,
+                    limit: int = 100) -> List[Dict]:
+    """Get live trades, optionally filtered by status and symbol."""
+    conn = get_connection()
+    query = "SELECT * FROM live_trades WHERE 1=1"
+    params = []
+
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    if symbol:
+        query += " AND symbol = ?"
+        params.append(symbol.upper())
+
+    query += " ORDER BY entry_time DESC LIMIT ?"
+    params.append(limit)
+
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_trade_stats() -> Dict:
+    """Get aggregate trade statistics."""
+    conn = get_connection()
+    stats = {}
+
+    row = conn.execute("""
+        SELECT
+            COUNT(*) as total_trades,
+            SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_trades,
+            SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) as closed_trades,
+            SUM(CASE WHEN status = 'CLOSED' AND pnl > 0 THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN status = 'CLOSED' AND pnl <= 0 THEN 1 ELSE 0 END) as losses,
+            SUM(CASE WHEN status = 'CLOSED' THEN pnl ELSE 0 END) as total_pnl,
+            AVG(CASE WHEN status = 'CLOSED' THEN pnl_pct ELSE NULL END) as avg_pnl_pct,
+            MAX(CASE WHEN status = 'CLOSED' THEN pnl ELSE NULL END) as best_trade,
+            MIN(CASE WHEN status = 'CLOSED' THEN pnl ELSE NULL END) as worst_trade
+        FROM live_trades
+    """).fetchone()
+
+    if row:
+        stats = dict(row)
+        closed = stats.get("closed_trades", 0) or 0
+        wins = stats.get("wins", 0) or 0
+        stats["win_rate"] = round((wins / closed * 100), 1) if closed > 0 else 0
+
+    conn.close()
+    return stats
 
 
 # --- Settings ---

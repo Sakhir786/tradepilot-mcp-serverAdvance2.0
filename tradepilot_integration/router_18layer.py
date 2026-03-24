@@ -1040,3 +1040,290 @@ if DATA_SOURCE == "ibkr":
             return get_account_summary()
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Account summary failed: {str(e)}")
+
+    # -------------------------------------------------------------------
+    # AI-Critical Execution Endpoints
+    # -------------------------------------------------------------------
+
+    class ExecuteSignalRequest(BaseModel):
+        symbol: str = Field(..., description="Stock symbol to analyze and execute")
+        mode: str = Field("swing", description="Trading mode: scalp, intraday, swing, leaps")
+        quantity: int = Field(1, ge=1, description="Number of contracts (0 = use engine suggestion)")
+        order_type: str = Field("LMT", description="LMT or MKT")
+        limit_price: Optional[float] = Field(None, description="Override limit price")
+        dry_run: bool = Field(False, description="Preview without executing")
+        bracket: bool = Field(False, description="Place bracket order with TP/SL")
+
+    class ModifyOrderRequest(BaseModel):
+        order_id: int
+        new_limit_price: Optional[float] = None
+        new_quantity: Optional[int] = None
+
+    class RollOptionRequest(BaseModel):
+        symbol: str
+        old_con_id: int = Field(..., description="conId of position to close")
+        new_expiry: str = Field(..., description="New expiration YYYYMMDD")
+        new_strike: Optional[float] = None
+        new_right: Optional[str] = None
+        quantity: Optional[int] = None
+        order_type: str = "MKT"
+
+    class BracketOrderRequest(BaseModel):
+        symbol: str
+        expiry: str
+        strike: float
+        right: str
+        action: str = "BUY"
+        quantity: int = Field(1, ge=1)
+        entry_price: float
+        take_profit_price: float
+        stop_loss_price: float
+
+    @router.post("/execute/signal")
+    async def execute_from_signal(req: ExecuteSignalRequest):
+        """
+        AI's primary action: analyze a symbol, then auto-execute the trade.
+        Runs full 18-layer analysis → extracts recommendation → places order.
+        Set dry_run=true to preview without executing.
+        Set bracket=true to place entry + TP + SL in one shot.
+        """
+        try:
+            engine = get_engine()
+            symbol = req.symbol.upper()
+
+            trade_mode = {
+                "scalp": TradeMode.SCALP,
+                "swing": TradeMode.SWING,
+                "intraday": TradeMode.INTRADAY,
+                "leaps": TradeMode.LEAPS,
+            }.get(req.mode, TradeMode.SWING)
+
+            # Step 1: Run analysis
+            candles_data = get_candles_for_mode(symbol, mode=req.mode)
+            if not candles_data or "results" not in candles_data:
+                raise HTTPException(status_code=400, detail=f"No candle data for {symbol}")
+
+            mode_config = candles_data.get("_mode_config", {})
+            tf = f"{mode_config.get('multiplier', 1)}{mode_config.get('timespan', 'day')[0]}"
+
+            options_data = None
+            try:
+                options_data = get_full_option_chain_snapshot(symbol, limit=100)
+            except Exception:
+                pass
+
+            market_ctx = {}
+            try:
+                market_ctx = get_market_context(mode=req.mode)
+            except Exception:
+                pass
+
+            result = engine.analyze(
+                ticker=symbol,
+                candles_data=candles_data,
+                options_data=options_data,
+                mode=trade_mode,
+                timeframe=tf,
+                market_context=market_ctx,
+            )
+
+            analysis_dict = convert_numpy_types(engine.to_dict(result))
+
+            # Step 2: Execute
+            from ibkr_client import execute_signal, execute_signal_bracket
+
+            if req.bracket:
+                exec_result = execute_signal_bracket(
+                    analysis_result=analysis_dict,
+                    quantity=req.quantity,
+                )
+            else:
+                exec_result = execute_signal(
+                    analysis_result=analysis_dict,
+                    quantity=req.quantity,
+                    order_type=req.order_type,
+                    limit_price=req.limit_price,
+                    dry_run=req.dry_run,
+                )
+
+            # Step 3: Record in database
+            if "order_id" in exec_result or "parent" in exec_result:
+                try:
+                    import database as db
+                    order_id = exec_result.get("order_id", exec_result.get("parent", {}).get("order_id", 0))
+                    signal = exec_result.get("engine_signal", {})
+                    opt_rec = analysis_dict.get("option_recommendation", {})
+                    db.save_live_trade(
+                        order_id=order_id,
+                        symbol=symbol,
+                        mode=req.mode,
+                        action=signal.get("action", exec_result.get("action", "")),
+                        right=exec_result.get("contract", {}).get("right", ""),
+                        strike=opt_rec.get("strike", 0),
+                        expiry=opt_rec.get("expiry_date", ""),
+                        quantity=req.quantity,
+                        entry_price=signal.get("entry", 0),
+                        stop_price=signal.get("stop", 0),
+                        target_price=signal.get("target", 0),
+                        confidence=signal.get("confidence", ""),
+                        win_probability=signal.get("win_probability", 0),
+                        signal_data=analysis_dict.get("analysis_summary", {}),
+                    )
+                except Exception as e:
+                    print(f"[Router] Trade record warning: {e}")
+
+            return convert_numpy_types({
+                "analysis": {
+                    "ticker": symbol,
+                    "direction": analysis_dict.get("analysis_summary", {}).get("direction"),
+                    "action": analysis_dict.get("analysis_summary", {}).get("action"),
+                    "confidence": analysis_dict.get("analysis_summary", {}).get("confidence"),
+                    "win_probability": analysis_dict.get("analysis_summary", {}).get("win_probability"),
+                    "trade_valid": analysis_dict.get("analysis_summary", {}).get("trade_valid"),
+                },
+                "execution": exec_result,
+            })
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Execute signal failed: {str(e)}")
+
+    @router.post("/execute/bracket")
+    async def execute_bracket_order(req: BracketOrderRequest):
+        """
+        Place a bracket order: entry + take-profit + stop-loss.
+        IBKR handles OCO (one-cancels-other) server-side.
+        """
+        try:
+            from ibkr_client import place_bracket_order
+            result = place_bracket_order(
+                symbol=req.symbol,
+                expiry=req.expiry,
+                strike=req.strike,
+                right=req.right,
+                action=req.action,
+                quantity=req.quantity,
+                entry_price=req.entry_price,
+                take_profit_price=req.take_profit_price,
+                stop_loss_price=req.stop_loss_price,
+            )
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Bracket order failed: {str(e)}")
+
+    @router.put("/orders/{order_id}")
+    async def modify_order_endpoint(order_id: int, req: ModifyOrderRequest):
+        """Modify an open order's price or quantity."""
+        try:
+            from ibkr_client import modify_order
+            result = modify_order(
+                order_id=order_id,
+                new_limit_price=req.new_limit_price,
+                new_quantity=req.new_quantity,
+            )
+            if "error" in result:
+                raise HTTPException(status_code=404, detail=result["error"])
+            return result
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Modify failed: {str(e)}")
+
+    @router.post("/roll")
+    async def roll_option_endpoint(req: RollOptionRequest):
+        """
+        Roll an option: close expiring position → open new DTE.
+        AI uses this to manage expiring positions automatically.
+        """
+        try:
+            from ibkr_client import roll_option
+            result = roll_option(
+                symbol=req.symbol,
+                old_con_id=req.old_con_id,
+                new_expiry=req.new_expiry,
+                new_strike=req.new_strike,
+                new_right=req.new_right,
+                quantity=req.quantity,
+                order_type=req.order_type,
+            )
+            if "error" in result:
+                raise HTTPException(status_code=400, detail=result["error"])
+            return result
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Roll failed: {str(e)}")
+
+    @router.post("/close/all")
+    async def close_all_endpoint():
+        """Emergency flatten: close ALL positions with market orders."""
+        try:
+            from ibkr_client import close_all_positions
+            return close_all_positions(order_type="MKT")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Close all failed: {str(e)}")
+
+    @router.delete("/orders/all")
+    async def cancel_all_orders_endpoint():
+        """Cancel ALL open orders immediately."""
+        try:
+            from ibkr_client import cancel_all_orders
+            return cancel_all_orders()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Cancel all failed: {str(e)}")
+
+    @router.get("/positions/pnl")
+    async def position_pnl(symbol: Optional[str] = Query(None)):
+        """Get real-time P&L for each position."""
+        try:
+            from ibkr_client import get_position_pnl
+            return {"positions": get_position_pnl(symbol=symbol)}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"PnL failed: {str(e)}")
+
+    @router.get("/portfolio/risk")
+    async def portfolio_risk():
+        """
+        Portfolio-level risk: total Greeks, exposure %, concentration, warnings.
+        AI should check this BEFORE placing any new trade.
+        """
+        try:
+            from ibkr_client import get_portfolio_risk
+            return get_portfolio_risk()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Portfolio risk failed: {str(e)}")
+
+    @router.get("/orders/{order_id}/wait")
+    async def wait_for_fill_endpoint(
+        order_id: int,
+        timeout: int = Query(60, ge=5, le=300, description="Max seconds to wait"),
+    ):
+        """Wait for an order to fill (polls until filled or timeout)."""
+        try:
+            from ibkr_client import wait_for_fill
+            return wait_for_fill(order_id=order_id, timeout_seconds=timeout)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Wait failed: {str(e)}")
+
+    @router.get("/trades")
+    async def list_trades(
+        status: Optional[str] = Query(None, description="Filter: OPEN, CLOSED, PENDING"),
+        symbol: Optional[str] = Query(None),
+        limit: int = Query(100, ge=1, le=500),
+    ):
+        """Get recorded live trades from database."""
+        try:
+            import database as db
+            return {"trades": db.get_live_trades(status=status, symbol=symbol, limit=limit)}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Trades query failed: {str(e)}")
+
+    @router.get("/trades/stats")
+    async def trade_stats():
+        """Aggregate trade statistics: win rate, total P&L, best/worst trade."""
+        try:
+            import database as db
+            return db.get_trade_stats()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Stats failed: {str(e)}")

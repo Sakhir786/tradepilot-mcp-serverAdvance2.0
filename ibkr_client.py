@@ -962,3 +962,683 @@ def get_account_summary() -> dict:
 
     print(f"[IBKR] Account: NLV=${summary.get('NetLiquidation', '?')}")
     return summary
+
+
+# ---------------------------------------------------------------------------
+# AI-Critical Execution Functions
+# ---------------------------------------------------------------------------
+
+def execute_signal(
+    analysis_result: dict,
+    quantity: int = 1,
+    order_type: str = "LMT",
+    limit_price: Optional[float] = None,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Execute a trade directly from engine analysis output.
+    This is the AI's primary action — takes the 18-layer result and places the order.
+
+    Args:
+        analysis_result: Dict from /engine18/analyze (the engine's full output)
+        quantity: Number of contracts (overrides engine suggestion if set)
+        order_type: "LMT" (default, uses mid-price) or "MKT"
+        limit_price: Override price. None = auto mid-price for LMT.
+        dry_run: If True, returns what would be placed without executing.
+
+    Returns:
+        Dict with order details, or dry_run preview.
+    """
+    # Extract recommendation from analysis
+    ticker = analysis_result.get("ticker", "")
+    trade_valid = analysis_result.get("analysis_summary", {}).get("trade_valid",
+                  analysis_result.get("trade_valid", False))
+    action = analysis_result.get("analysis_summary", {}).get("action",
+             analysis_result.get("action", "FLAT"))
+    direction = analysis_result.get("analysis_summary", {}).get("direction",
+                analysis_result.get("direction", "NEUTRAL"))
+    confidence = analysis_result.get("analysis_summary", {}).get("confidence",
+                 analysis_result.get("confidence", "NO_TRADE"))
+    win_prob = analysis_result.get("analysis_summary", {}).get("win_probability",
+               analysis_result.get("win_probability", 0))
+
+    opt = analysis_result.get("option_recommendation", {})
+    strike = opt.get("strike", analysis_result.get("strike", 0))
+    expiry_dte = opt.get("expiry_dte", analysis_result.get("expiry_dte", 0))
+    expiry_date = opt.get("expiry_date", analysis_result.get("expiry_date", ""))
+    delta = opt.get("delta", analysis_result.get("delta", 0))
+
+    exec_plan = analysis_result.get("execution_plan", {})
+    entry = exec_plan.get("entry", analysis_result.get("entry_price", 0))
+    target = exec_plan.get("target", analysis_result.get("target_price", 0))
+    stop = exec_plan.get("stop", analysis_result.get("stop_price", 0))
+
+    contracts = analysis_result.get("execution_plan", {}).get("contracts",
+                analysis_result.get("contracts_suggested", quantity))
+
+    # Determine right (C/P) from action
+    if action in ("BUY_CALL", "SELL_PUT"):
+        right = "C"
+        order_action = "BUY" if action == "BUY_CALL" else "SELL"
+    elif action in ("BUY_PUT", "SELL_CALL"):
+        right = "P"
+        order_action = "BUY" if action == "BUY_PUT" else "SELL"
+    else:
+        return {
+            "error": "NO_TRADE",
+            "reason": f"Engine action is {action} — no order to place",
+            "trade_valid": trade_valid,
+            "confidence": confidence,
+        }
+
+    if not trade_valid:
+        return {
+            "error": "TRADE_INVALID",
+            "reason": "Engine says trade_valid=False",
+            "action": action,
+            "confidence": confidence,
+            "win_probability": win_prob,
+        }
+
+    # Format expiry
+    expiry_fmt = expiry_date.replace("-", "") if expiry_date else ""
+    if not expiry_fmt:
+        return {"error": "NO_EXPIRY", "reason": "Engine did not provide expiry_date"}
+
+    use_qty = quantity if quantity > 1 else max(1, int(contracts or 1))
+
+    preview = {
+        "symbol": ticker,
+        "expiry": expiry_fmt,
+        "strike": strike,
+        "right": right,
+        "action": order_action,
+        "quantity": use_qty,
+        "order_type": order_type,
+        "limit_price": limit_price or entry,
+        "engine_signal": {
+            "direction": direction,
+            "action": action,
+            "confidence": confidence,
+            "win_probability": win_prob,
+            "delta": delta,
+            "entry": entry,
+            "target": target,
+            "stop": stop,
+        },
+    }
+
+    if dry_run:
+        preview["dry_run"] = True
+        print(f"[IBKR-DRY] Would place: {order_action} {use_qty}x {ticker} {expiry_fmt} ${strike} {right}")
+        return preview
+
+    # Execute
+    result = place_option_order(
+        symbol=ticker,
+        expiry=expiry_fmt,
+        strike=strike,
+        right=right,
+        action=order_action,
+        quantity=use_qty,
+        order_type=order_type,
+        limit_price=limit_price,
+    )
+    result["engine_signal"] = preview["engine_signal"]
+    return result
+
+
+def place_bracket_order(
+    symbol: str,
+    expiry: str,
+    strike: float,
+    right: str,
+    action: str = "BUY",
+    quantity: int = 1,
+    entry_price: float = 0,
+    take_profit_price: float = 0,
+    stop_loss_price: float = 0,
+) -> dict:
+    """
+    Place a bracket order: entry + profit target + stop loss in one shot.
+    IBKR handles the OCO (one-cancels-other) logic server-side.
+
+    Args:
+        symbol: Underlying
+        expiry: YYYYMMDD
+        strike: Strike price
+        right: "C" or "P"
+        action: "BUY" or "SELL"
+        quantity: Contracts
+        entry_price: Limit entry price
+        take_profit_price: Limit exit price for profit
+        stop_loss_price: Stop price for loss
+
+    Returns:
+        Dict with parent + child order IDs.
+    """
+    from ib_insync import LimitOrder, StopOrder, Order
+
+    ib = _get_ib()
+    expiry_clean = expiry.replace("-", "")
+    contract = Option(symbol.upper(), expiry_clean, strike, right.upper(), "SMART")
+    ib.qualifyContracts(contract)
+
+    exit_action = "SELL" if action.upper() == "BUY" else "BUY"
+
+    # Parent: limit entry
+    parent = LimitOrder(action.upper(), quantity, entry_price)
+    parent.orderId = ib.client.getReqId()
+    parent.transmit = False
+
+    # Child 1: take profit
+    tp = LimitOrder(exit_action, quantity, take_profit_price)
+    tp.orderId = ib.client.getReqId()
+    tp.parentId = parent.orderId
+    tp.transmit = False
+
+    # Child 2: stop loss (OCO with take profit)
+    sl = StopOrder(exit_action, quantity, stop_loss_price)
+    sl.orderId = ib.client.getReqId()
+    sl.parentId = parent.orderId
+    sl.transmit = True  # Last child transmits the whole bracket
+
+    trade_parent = ib.placeOrder(contract, parent)
+    trade_tp = ib.placeOrder(contract, tp)
+    trade_sl = ib.placeOrder(contract, sl)
+    ib.sleep(1)
+
+    print(
+        f"[IBKR-BRACKET] {action} {quantity}x {symbol} ${strike}{right} | "
+        f"Entry=${entry_price} TP=${take_profit_price} SL=${stop_loss_price}"
+    )
+
+    return {
+        "parent": {
+            "order_id": parent.orderId,
+            "status": trade_parent.orderStatus.status,
+            "type": "ENTRY",
+            "price": entry_price,
+        },
+        "take_profit": {
+            "order_id": tp.orderId,
+            "status": trade_tp.orderStatus.status,
+            "type": "TAKE_PROFIT",
+            "price": take_profit_price,
+        },
+        "stop_loss": {
+            "order_id": sl.orderId,
+            "status": trade_sl.orderStatus.status,
+            "type": "STOP_LOSS",
+            "price": stop_loss_price,
+        },
+        "symbol": symbol.upper(),
+        "contract": {"expiry": expiry_clean, "strike": strike, "right": right.upper()},
+        "quantity": quantity,
+    }
+
+
+def execute_signal_bracket(
+    analysis_result: dict,
+    quantity: int = 1,
+) -> dict:
+    """
+    Execute a bracket order directly from engine analysis output.
+    Uses engine's entry/target/stop prices for the bracket.
+
+    Args:
+        analysis_result: Dict from /engine18/analyze
+        quantity: Override contract count
+
+    Returns:
+        Bracket order result or error.
+    """
+    ticker = analysis_result.get("ticker", "")
+    trade_valid = analysis_result.get("analysis_summary", {}).get("trade_valid",
+                  analysis_result.get("trade_valid", False))
+    action = analysis_result.get("analysis_summary", {}).get("action",
+             analysis_result.get("action", "FLAT"))
+
+    if not trade_valid or action in ("FLAT", "NO_TRADE"):
+        return {"error": "NO_TRADE", "reason": f"action={action}, trade_valid={trade_valid}"}
+
+    opt = analysis_result.get("option_recommendation", {})
+    strike = opt.get("strike", analysis_result.get("strike", 0))
+    expiry_date = opt.get("expiry_date", analysis_result.get("expiry_date", ""))
+    expiry_fmt = expiry_date.replace("-", "")
+
+    exec_plan = analysis_result.get("execution_plan", {})
+    entry = exec_plan.get("entry", analysis_result.get("entry_price", 0))
+    target = exec_plan.get("target", analysis_result.get("target_price", 0))
+    stop = exec_plan.get("stop", analysis_result.get("stop_price", 0))
+
+    contracts = exec_plan.get("contracts", analysis_result.get("contracts_suggested", quantity))
+    use_qty = quantity if quantity > 1 else max(1, int(contracts or 1))
+
+    if action in ("BUY_CALL", "SELL_PUT"):
+        right = "C"
+        order_action = "BUY" if action == "BUY_CALL" else "SELL"
+    elif action in ("BUY_PUT", "SELL_CALL"):
+        right = "P"
+        order_action = "BUY" if action == "BUY_PUT" else "SELL"
+    else:
+        return {"error": "UNKNOWN_ACTION", "action": action}
+
+    if not all([expiry_fmt, strike, entry, target, stop]):
+        return {"error": "MISSING_DATA", "expiry": expiry_fmt, "strike": strike,
+                "entry": entry, "target": target, "stop": stop}
+
+    return place_bracket_order(
+        symbol=ticker,
+        expiry=expiry_fmt,
+        strike=strike,
+        right=right,
+        action=order_action,
+        quantity=use_qty,
+        entry_price=entry,
+        take_profit_price=target,
+        stop_loss_price=stop,
+    )
+
+
+def modify_order(
+    order_id: int,
+    new_limit_price: Optional[float] = None,
+    new_quantity: Optional[int] = None,
+) -> dict:
+    """
+    Modify an existing open order (price and/or quantity).
+
+    Args:
+        order_id: The order ID to modify
+        new_limit_price: New limit price (None = keep current)
+        new_quantity: New quantity (None = keep current)
+
+    Returns:
+        Dict with updated order details.
+    """
+    ib = _get_ib()
+    trades = ib.openTrades()
+
+    for trade in trades:
+        if trade.order.orderId == order_id:
+            if new_limit_price is not None:
+                trade.order.lmtPrice = new_limit_price
+            if new_quantity is not None:
+                trade.order.totalQuantity = new_quantity
+            ib.placeOrder(trade.contract, trade.order)
+            ib.sleep(1)
+            print(
+                f"[IBKR-MODIFY] OrderId={order_id} | "
+                f"Price={new_limit_price or 'unchanged'} Qty={new_quantity or 'unchanged'}"
+            )
+            return {
+                "order_id": order_id,
+                "status": trade.orderStatus.status,
+                "new_limit_price": new_limit_price,
+                "new_quantity": new_quantity,
+                "symbol": trade.contract.symbol,
+            }
+
+    return {"error": f"Order {order_id} not found in open orders"}
+
+
+def roll_option(
+    symbol: str,
+    old_con_id: int,
+    new_expiry: str,
+    new_strike: Optional[float] = None,
+    new_right: Optional[str] = None,
+    quantity: Optional[int] = None,
+    order_type: str = "MKT",
+) -> dict:
+    """
+    Roll an option position: close current, open new DTE.
+
+    Args:
+        symbol: Underlying
+        old_con_id: conId of position to close (from get_positions)
+        new_expiry: New expiration YYYYMMDD
+        new_strike: New strike (None = same strike)
+        new_right: New right C/P (None = same right)
+        quantity: Contracts to roll (None = full position)
+        order_type: "MKT" or "LMT"
+
+    Returns:
+        Dict with close_order and open_order details.
+    """
+    ib = _get_ib()
+    positions = ib.positions()
+
+    old_pos = None
+    for pos in positions:
+        if pos.contract.conId == old_con_id:
+            old_pos = pos
+            break
+
+    if old_pos is None:
+        return {"error": f"Position conId={old_con_id} not found"}
+
+    old_contract = old_pos.contract
+    roll_qty = abs(quantity or int(old_pos.position))
+    use_strike = new_strike or old_contract.strike
+    use_right = (new_right or old_contract.right).upper()
+
+    # Step 1: Close old position
+    close_result = close_position(
+        symbol=symbol,
+        con_id=old_con_id,
+        quantity=roll_qty,
+        order_type=order_type,
+    )
+
+    if "error" in close_result:
+        return {"error": f"Close failed: {close_result['error']}"}
+
+    # Step 2: Open new position
+    open_action = "BUY" if old_pos.position > 0 else "SELL"
+    open_result = place_option_order(
+        symbol=symbol,
+        expiry=new_expiry.replace("-", ""),
+        strike=use_strike,
+        right=use_right,
+        action=open_action,
+        quantity=roll_qty,
+        order_type=order_type,
+    )
+
+    print(
+        f"[IBKR-ROLL] {symbol} | Close conId={old_con_id} → "
+        f"Open {new_expiry} ${use_strike}{use_right} x{roll_qty}"
+    )
+
+    return {
+        "close_order": close_result,
+        "open_order": open_result,
+        "rolled": {
+            "symbol": symbol.upper(),
+            "from_expiry": old_contract.lastTradeDateOrContractMonth,
+            "from_strike": old_contract.strike,
+            "to_expiry": new_expiry.replace("-", ""),
+            "to_strike": use_strike,
+            "right": use_right,
+            "quantity": roll_qty,
+        },
+    }
+
+
+def close_all_positions(order_type: str = "MKT") -> dict:
+    """
+    Emergency flatten: close ALL option positions immediately.
+
+    Args:
+        order_type: "MKT" (recommended for emergency) or "LMT"
+
+    Returns:
+        Dict with list of close orders placed.
+    """
+    ib = _get_ib()
+    positions = ib.positions()
+
+    if not positions:
+        return {"closed": [], "message": "No positions to close"}
+
+    results = []
+    for pos in positions:
+        if pos.position == 0:
+            continue
+        try:
+            result = close_position(
+                symbol=pos.contract.symbol,
+                con_id=pos.contract.conId,
+                quantity=abs(int(pos.position)),
+                order_type=order_type,
+            )
+            results.append(result)
+        except Exception as e:
+            results.append({
+                "error": str(e),
+                "symbol": pos.contract.symbol,
+                "con_id": pos.contract.conId,
+            })
+
+    print(f"[IBKR-FLATTEN] Closed {len(results)} positions")
+    return {"closed": results, "count": len(results)}
+
+
+def get_position_pnl(symbol: Optional[str] = None) -> list:
+    """
+    Get real-time P&L for each position (unrealized + realized).
+
+    Args:
+        symbol: Filter by symbol (None = all positions)
+
+    Returns:
+        List of position P&L dicts with market value, unrealized P&L, etc.
+    """
+    ib = _get_ib()
+    ib.reqPnL(ib.managedAccounts()[0])
+    ib.sleep(1)
+
+    positions = ib.positions()
+    results = []
+
+    for pos in positions:
+        if pos.position == 0:
+            continue
+        if symbol and pos.contract.symbol.upper() != symbol.upper():
+            continue
+
+        con = pos.contract
+        ib.qualifyContracts(con)
+
+        # Get current market price
+        ticker = ib.reqMktData(con, "", False, False)
+        ib.sleep(1)
+        market_price = float(ticker.marketPrice()) if ticker.marketPrice() == ticker.marketPrice() else 0
+        ib.cancelMktData(con)
+
+        qty = float(pos.position)
+        avg_cost = float(pos.avgCost)
+        # Options: avgCost is per share, multiply by 100 for per-contract
+        multiplier = 100 if con.secType == "OPT" else 1
+        cost_basis = avg_cost * abs(qty)
+        market_value = market_price * abs(qty) * multiplier
+        unrealized_pnl = (market_price * multiplier - avg_cost) * qty
+
+        results.append({
+            "symbol": con.symbol,
+            "sec_type": con.secType,
+            "con_id": con.conId,
+            "quantity": qty,
+            "avg_cost": avg_cost,
+            "market_price": market_price,
+            "cost_basis": round(cost_basis, 2),
+            "market_value": round(market_value, 2),
+            "unrealized_pnl": round(unrealized_pnl, 2),
+            "unrealized_pnl_pct": round((unrealized_pnl / cost_basis) * 100, 2) if cost_basis > 0 else 0,
+            "expiry": getattr(con, "lastTradeDateOrContractMonth", ""),
+            "strike": getattr(con, "strike", 0),
+            "right": getattr(con, "right", ""),
+            "dte": _calc_dte(getattr(con, "lastTradeDateOrContractMonth", "")),
+        })
+
+    return results
+
+
+def _calc_dte(expiry_str: str) -> int:
+    """Calculate days to expiration from YYYYMMDD string."""
+    if not expiry_str or len(expiry_str) < 8:
+        return -1
+    try:
+        exp_date = datetime.strptime(expiry_str[:8], "%Y%m%d").date()
+        return (exp_date - datetime.now().date()).days
+    except ValueError:
+        return -1
+
+
+def get_portfolio_risk() -> dict:
+    """
+    Get portfolio-level risk metrics: total Greeks, exposure, concentration.
+    Critical for AI to check before placing new trades.
+
+    Returns:
+        Dict with aggregated Greeks, exposure by symbol, and risk flags.
+    """
+    ib = _get_ib()
+    positions = ib.positions()
+
+    total_delta = 0.0
+    total_gamma = 0.0
+    total_theta = 0.0
+    total_vega = 0.0
+    total_exposure = 0.0
+    total_cost = 0.0
+    by_symbol = {}
+    expiring_soon = []
+
+    for pos in positions:
+        if pos.position == 0:
+            continue
+
+        con = pos.contract
+        qty = float(pos.position)
+        ib.qualifyContracts(con)
+
+        # Request greeks
+        ticker = ib.reqMktData(con, "100,101,104,106", False, False)
+        ib.sleep(1)
+
+        greeks = ticker.modelGreeks
+        market_price = float(ticker.marketPrice()) if ticker.marketPrice() == ticker.marketPrice() else 0
+        ib.cancelMktData(con)
+
+        multiplier = 100 if con.secType == "OPT" else 1
+        position_value = abs(market_price * qty * multiplier)
+
+        if greeks:
+            d = float(greeks.delta) if greeks.delta == greeks.delta else 0
+            g = float(greeks.gamma) if greeks.gamma == greeks.gamma else 0
+            t = float(greeks.theta) if greeks.theta == greeks.theta else 0
+            v = float(greeks.vega) if greeks.vega == greeks.vega else 0
+            total_delta += d * qty * multiplier
+            total_gamma += g * qty * multiplier
+            total_theta += t * qty * multiplier
+            total_vega += v * qty * multiplier
+
+        total_exposure += position_value
+        total_cost += abs(float(pos.avgCost) * qty)
+
+        sym = con.symbol
+        if sym not in by_symbol:
+            by_symbol[sym] = {"contracts": 0, "exposure": 0, "delta": 0}
+        by_symbol[sym]["contracts"] += abs(int(qty))
+        by_symbol[sym]["exposure"] += position_value
+        if greeks:
+            by_symbol[sym]["delta"] += d * qty * multiplier
+
+        # Flag positions expiring within 2 days
+        dte = _calc_dte(getattr(con, "lastTradeDateOrContractMonth", ""))
+        if 0 <= dte <= 2:
+            expiring_soon.append({
+                "symbol": sym,
+                "con_id": con.conId,
+                "strike": getattr(con, "strike", 0),
+                "right": getattr(con, "right", ""),
+                "dte": dte,
+                "quantity": qty,
+            })
+
+    # Risk flags
+    account = get_account_summary()
+    nlv = account.get("NetLiquidation", 1)
+    buying_power = account.get("BuyingPower", 0)
+
+    exposure_pct = (total_exposure / nlv * 100) if nlv > 0 else 0
+    warnings = []
+    if exposure_pct > 50:
+        warnings.append(f"HIGH EXPOSURE: {exposure_pct:.0f}% of NLV in options")
+    if abs(total_delta) > 500:
+        warnings.append(f"HIGH DELTA: net {total_delta:.0f} — large directional risk")
+    if total_theta < -50:
+        warnings.append(f"HIGH THETA DECAY: losing ${abs(total_theta):.0f}/day")
+    if expiring_soon:
+        warnings.append(f"{len(expiring_soon)} position(s) expiring within 2 days — roll or close")
+    if buying_power < nlv * 0.2:
+        warnings.append(f"LOW BUYING POWER: ${buying_power:,.0f} ({buying_power/nlv*100:.0f}% of NLV)")
+
+    return {
+        "total_greeks": {
+            "delta": round(total_delta, 2),
+            "gamma": round(total_gamma, 4),
+            "theta": round(total_theta, 2),
+            "vega": round(total_vega, 2),
+        },
+        "exposure": {
+            "total_market_value": round(total_exposure, 2),
+            "total_cost_basis": round(total_cost, 2),
+            "pct_of_nlv": round(exposure_pct, 1),
+        },
+        "by_symbol": by_symbol,
+        "positions_count": sum(1 for p in positions if p.position != 0),
+        "expiring_soon": expiring_soon,
+        "account": {
+            "net_liquidation": nlv,
+            "buying_power": buying_power,
+        },
+        "warnings": warnings,
+    }
+
+
+def wait_for_fill(order_id: int, timeout_seconds: int = 60) -> dict:
+    """
+    Wait for an order to fill (poll until filled or timeout).
+
+    Args:
+        order_id: Order ID to wait for
+        timeout_seconds: Max seconds to wait (default 60)
+
+    Returns:
+        Dict with final order status, fill price, and fill time.
+    """
+    ib = _get_ib()
+    start = time.time()
+
+    while time.time() - start < timeout_seconds:
+        trades = ib.trades()
+        for trade in trades:
+            if trade.order.orderId == order_id:
+                status = trade.orderStatus.status
+                if status in ("Filled",):
+                    print(f"[IBKR-FILL] OrderId={order_id} FILLED @ ${trade.orderStatus.avgFillPrice}")
+                    return {
+                        "order_id": order_id,
+                        "status": "Filled",
+                        "avg_fill_price": trade.orderStatus.avgFillPrice,
+                        "filled": trade.orderStatus.filled,
+                        "fill_time": datetime.now().isoformat(),
+                        "symbol": trade.contract.symbol,
+                    }
+                elif status in ("Cancelled", "ApiCancelled", "Inactive"):
+                    return {
+                        "order_id": order_id,
+                        "status": status,
+                        "reason": "Order was cancelled or rejected",
+                    }
+        ib.sleep(1)
+
+    return {
+        "order_id": order_id,
+        "status": "TIMEOUT",
+        "waited_seconds": timeout_seconds,
+        "message": "Order not filled within timeout",
+    }
+
+
+def cancel_all_orders() -> dict:
+    """Cancel ALL open orders immediately."""
+    ib = _get_ib()
+    ib.reqGlobalCancel()
+    ib.sleep(1)
+    print("[IBKR-CANCEL-ALL] Global cancel requested")
+    return {"status": "GLOBAL_CANCEL_SENT", "timestamp": datetime.now().isoformat()}
