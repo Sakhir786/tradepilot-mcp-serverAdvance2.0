@@ -897,3 +897,146 @@ async def get_strategies(
         return convert_numpy_types(result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# IBKR Execution Endpoints (only available when DATA_SOURCE=ibkr)
+# ---------------------------------------------------------------------------
+
+if DATA_SOURCE == "ibkr":
+    from pydantic import BaseModel, Field
+    from typing import List as TypingList
+
+    class OptionOrderRequest(BaseModel):
+        symbol: str = Field(..., description="Underlying symbol (e.g. SPY)")
+        expiry: str = Field(..., description="Expiration YYYYMMDD or YYYY-MM-DD")
+        strike: float = Field(..., description="Strike price")
+        right: str = Field(..., description="C for call, P for put")
+        action: str = Field("BUY", description="BUY or SELL")
+        quantity: int = Field(1, description="Number of contracts", ge=1)
+        order_type: str = Field("LMT", description="LMT, MKT, or STP")
+        limit_price: Optional[float] = Field(None, description="Limit price (auto mid-price if None for LMT)")
+
+    class SpreadLeg(BaseModel):
+        expiry: str
+        strike: float
+        right: str
+        action: str
+        ratio: int = 1
+
+    class SpreadOrderRequest(BaseModel):
+        symbol: str
+        legs: TypingList[SpreadLeg]
+        action: str = "BUY"
+        quantity: int = Field(1, ge=1)
+        order_type: str = "LMT"
+        limit_price: Optional[float] = None
+
+    class CloseRequest(BaseModel):
+        symbol: str
+        con_id: int = 0
+        quantity: Optional[int] = None
+        order_type: str = "MKT"
+
+    @router.post("/execute")
+    async def execute_option_order(req: OptionOrderRequest):
+        """
+        Place a single-leg option order via IBKR.
+        Requires DATA_SOURCE=ibkr and active IB Gateway connection.
+        """
+        try:
+            from ibkr_client import place_option_order
+            result = place_option_order(
+                symbol=req.symbol,
+                expiry=req.expiry,
+                strike=req.strike,
+                right=req.right,
+                action=req.action,
+                quantity=req.quantity,
+                order_type=req.order_type,
+                limit_price=req.limit_price,
+            )
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Order failed: {str(e)}")
+
+    @router.post("/execute/spread")
+    async def execute_spread_order(req: SpreadOrderRequest):
+        """
+        Place a multi-leg spread order via IBKR.
+        Supports verticals, iron condors, etc.
+        """
+        try:
+            from ibkr_client import place_spread_order
+            legs = [leg.model_dump() for leg in req.legs]
+            result = place_spread_order(
+                symbol=req.symbol,
+                legs=legs,
+                action=req.action,
+                quantity=req.quantity,
+                order_type=req.order_type,
+                limit_price=req.limit_price,
+            )
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Spread order failed: {str(e)}")
+
+    @router.post("/close")
+    async def close_position_endpoint(req: CloseRequest):
+        """Close an existing position."""
+        try:
+            from ibkr_client import close_position
+            result = close_position(
+                symbol=req.symbol,
+                con_id=req.con_id,
+                quantity=req.quantity,
+                order_type=req.order_type,
+            )
+            if "error" in result:
+                raise HTTPException(status_code=404, detail=result["error"])
+            return result
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Close failed: {str(e)}")
+
+    @router.get("/positions")
+    async def list_positions():
+        """Get all current IBKR positions."""
+        try:
+            from ibkr_client import get_positions
+            return {"positions": get_positions()}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Positions failed: {str(e)}")
+
+    @router.get("/orders")
+    async def list_open_orders():
+        """Get all open/pending orders."""
+        try:
+            from ibkr_client import get_open_orders
+            return {"orders": get_open_orders()}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Orders failed: {str(e)}")
+
+    @router.delete("/orders/{order_id}")
+    async def cancel_order_endpoint(order_id: int):
+        """Cancel an open order."""
+        try:
+            from ibkr_client import cancel_order
+            result = cancel_order(order_id)
+            if "error" in result:
+                raise HTTPException(status_code=404, detail=result["error"])
+            return result
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Cancel failed: {str(e)}")
+
+    @router.get("/account")
+    async def account_summary():
+        """Get account balance, buying power, P&L."""
+        try:
+            from ibkr_client import get_account_summary
+            return get_account_summary()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Account summary failed: {str(e)}")

@@ -1,17 +1,25 @@
 """
 IBKR Client for TradePilot
 ===========================
-Drop-in replacement for polygon_client.py data functions.
-Connects to IB Gateway/TWS via ib_insync, returns data in the
-exact same format the 18-layer engine expects.
+Drop-in replacement for polygon_client.py data functions,
+plus live order execution via IB Gateway.
 
-Functions mirrored from polygon_client.py:
+Data functions (Polygon-compatible output):
   - get_candles_for_mode(symbol, mode)
   - get_candles(symbol, tf, limit)
   - get_full_option_chain_snapshot(symbol, limit, min_dte)
   - get_market_context(mode)
   - get_option_chain_snapshot(symbol, cursor, limit)
   - get_ticker_details(symbol)
+
+Execution functions:
+  - place_option_order(symbol, expiry, strike, right, action, quantity, order_type, limit_price)
+  - place_spread_order(symbol, legs, action, quantity, order_type, limit_price)
+  - get_positions()
+  - close_position(symbol, contract_id)
+  - get_open_orders()
+  - cancel_order(order_id)
+  - get_account_summary()
 """
 
 import time
@@ -632,3 +640,325 @@ def get_market_context(mode: str = "swing") -> dict:
         f"VIX={vix_level} regime={vix_regime} | Bias={context['market_bias']}"
     )
     return context
+
+
+# ---------------------------------------------------------------------------
+# Order Execution
+# ---------------------------------------------------------------------------
+
+def place_option_order(
+    symbol: str,
+    expiry: str,
+    strike: float,
+    right: str,
+    action: str = "BUY",
+    quantity: int = 1,
+    order_type: str = "LMT",
+    limit_price: Optional[float] = None,
+) -> dict:
+    """
+    Place a single-leg option order.
+
+    Args:
+        symbol: Underlying (e.g. "SPY")
+        expiry: Expiration in YYYYMMDD or YYYY-MM-DD format
+        strike: Strike price
+        right: "C" or "P"
+        action: "BUY" or "SELL"
+        quantity: Number of contracts
+        order_type: "LMT", "MKT", or "STP"
+        limit_price: Required for LMT orders
+
+    Returns:
+        Dict with order_id, status, and fill details.
+    """
+    from ib_insync import LimitOrder, MarketOrder, StopOrder
+
+    ib = _get_ib()
+    expiry_clean = expiry.replace("-", "")
+    contract = Option(symbol.upper(), expiry_clean, strike, right.upper(), "SMART")
+    ib.qualifyContracts(contract)
+
+    if order_type == "MKT":
+        order = MarketOrder(action.upper(), quantity)
+    elif order_type == "STP":
+        if limit_price is None:
+            raise ValueError("limit_price required for STP orders")
+        order = StopOrder(action.upper(), quantity, limit_price)
+    else:
+        if limit_price is None:
+            # Auto-price: use midpoint
+            ticker = ib.reqMktData(contract, "", False, False)
+            ib.sleep(2)
+            bid = float(ticker.bid) if ticker.bid == ticker.bid and ticker.bid > 0 else 0
+            ask = float(ticker.ask) if ticker.ask == ticker.ask and ticker.ask > 0 else 0
+            ib.cancelMktData(contract)
+            if bid > 0 and ask > 0:
+                limit_price = round((bid + ask) / 2, 2)
+            else:
+                raise ValueError("Cannot determine price — provide limit_price or use MKT")
+        order = LimitOrder(action.upper(), quantity, limit_price)
+
+    trade = ib.placeOrder(contract, order)
+    ib.sleep(1)
+
+    print(
+        f"[IBKR-ORDER] {action} {quantity}x {symbol} {expiry_clean} "
+        f"${strike} {right} @ {order_type} {limit_price or 'MKT'} | "
+        f"OrderId={trade.order.orderId} Status={trade.orderStatus.status}"
+    )
+
+    return {
+        "order_id": trade.order.orderId,
+        "status": trade.orderStatus.status,
+        "symbol": symbol.upper(),
+        "contract": {
+            "expiry": expiry_clean,
+            "strike": strike,
+            "right": right.upper(),
+            "con_id": contract.conId,
+        },
+        "action": action.upper(),
+        "quantity": quantity,
+        "order_type": order_type,
+        "limit_price": limit_price,
+        "filled": trade.orderStatus.filled,
+        "avg_fill_price": trade.orderStatus.avgFillPrice,
+        "remaining": trade.orderStatus.remaining,
+    }
+
+
+def place_spread_order(
+    symbol: str,
+    legs: list,
+    action: str = "BUY",
+    quantity: int = 1,
+    order_type: str = "LMT",
+    limit_price: Optional[float] = None,
+) -> dict:
+    """
+    Place a multi-leg spread order (vertical, iron condor, etc).
+
+    Args:
+        symbol: Underlying
+        legs: List of dicts, each with:
+            - expiry: YYYYMMDD
+            - strike: float
+            - right: "C" or "P"
+            - action: "BUY" or "SELL"
+            - ratio: int (default 1)
+        quantity: Number of spreads
+        order_type: "LMT" or "MKT"
+        limit_price: Net debit (positive) or credit (negative) for LMT
+
+    Returns:
+        Dict with order_id and status.
+    """
+    from ib_insync import LimitOrder, MarketOrder, ComboLeg, Contract
+
+    ib = _get_ib()
+
+    # Build combo legs
+    combo_legs = []
+    for leg in legs:
+        opt = Option(
+            symbol.upper(),
+            leg["expiry"].replace("-", ""),
+            leg["strike"],
+            leg["right"].upper(),
+            "SMART",
+        )
+        ib.qualifyContracts(opt)
+        combo_legs.append(
+            ComboLeg(
+                conId=opt.conId,
+                ratio=leg.get("ratio", 1),
+                action=leg["action"].upper(),
+                exchange="SMART",
+            )
+        )
+
+    # Build combo contract
+    combo = Contract()
+    combo.symbol = symbol.upper()
+    combo.secType = "BAG"
+    combo.currency = "USD"
+    combo.exchange = "SMART"
+    combo.comboLegs = combo_legs
+
+    if order_type == "MKT":
+        order = MarketOrder(action.upper(), quantity)
+    else:
+        if limit_price is None:
+            raise ValueError("limit_price required for LMT spread orders")
+        order = LimitOrder(action.upper(), quantity, limit_price)
+
+    trade = ib.placeOrder(combo, order)
+    ib.sleep(1)
+
+    print(
+        f"[IBKR-SPREAD] {action} {quantity}x {symbol} {len(legs)}-leg spread | "
+        f"OrderId={trade.order.orderId} Status={trade.orderStatus.status}"
+    )
+
+    return {
+        "order_id": trade.order.orderId,
+        "status": trade.orderStatus.status,
+        "symbol": symbol.upper(),
+        "legs": len(legs),
+        "action": action.upper(),
+        "quantity": quantity,
+        "order_type": order_type,
+        "limit_price": limit_price,
+        "filled": trade.orderStatus.filled,
+        "avg_fill_price": trade.orderStatus.avgFillPrice,
+        "remaining": trade.orderStatus.remaining,
+    }
+
+
+def get_positions() -> list:
+    """Get all current positions."""
+    ib = _get_ib()
+    positions = ib.positions()
+
+    result = []
+    for pos in positions:
+        con = pos.contract
+        result.append({
+            "account": pos.account,
+            "symbol": con.symbol,
+            "sec_type": con.secType,
+            "con_id": con.conId,
+            "quantity": pos.position,
+            "avg_cost": pos.avgCost,
+            "expiry": getattr(con, "lastTradeDateOrContractMonth", ""),
+            "strike": getattr(con, "strike", 0),
+            "right": getattr(con, "right", ""),
+        })
+
+    print(f"[IBKR] Positions: {len(result)}")
+    return result
+
+
+def close_position(
+    symbol: str,
+    con_id: int = 0,
+    quantity: Optional[int] = None,
+    order_type: str = "MKT",
+) -> dict:
+    """
+    Close an existing position by symbol/conId.
+
+    Args:
+        symbol: Underlying symbol
+        con_id: Contract ID (from get_positions). If 0, closes first matching position.
+        quantity: Contracts to close. None = close entire position.
+        order_type: "MKT" (default) or "LMT"
+
+    Returns:
+        Dict with order details.
+    """
+    from ib_insync import MarketOrder, Contract
+
+    ib = _get_ib()
+    positions = ib.positions()
+
+    target = None
+    for pos in positions:
+        if pos.contract.symbol.upper() == symbol.upper():
+            if con_id == 0 or pos.contract.conId == con_id:
+                target = pos
+                break
+
+    if target is None:
+        return {"error": f"No position found for {symbol} (conId={con_id})"}
+
+    close_qty = abs(quantity or int(target.position))
+    close_action = "SELL" if target.position > 0 else "BUY"
+
+    contract = target.contract
+    ib.qualifyContracts(contract)
+
+    order = MarketOrder(close_action, close_qty)
+    trade = ib.placeOrder(contract, order)
+    ib.sleep(1)
+
+    print(
+        f"[IBKR-CLOSE] {close_action} {close_qty}x {symbol} conId={contract.conId} | "
+        f"OrderId={trade.order.orderId} Status={trade.orderStatus.status}"
+    )
+
+    return {
+        "order_id": trade.order.orderId,
+        "status": trade.orderStatus.status,
+        "action": close_action,
+        "quantity": close_qty,
+        "symbol": symbol.upper(),
+        "con_id": contract.conId,
+    }
+
+
+def get_open_orders() -> list:
+    """Get all open/pending orders."""
+    ib = _get_ib()
+    trades = ib.openTrades()
+
+    result = []
+    for trade in trades:
+        con = trade.contract
+        result.append({
+            "order_id": trade.order.orderId,
+            "status": trade.orderStatus.status,
+            "symbol": con.symbol,
+            "sec_type": con.secType,
+            "action": trade.order.action,
+            "quantity": trade.order.totalQuantity,
+            "order_type": trade.order.orderType,
+            "limit_price": trade.order.lmtPrice,
+            "filled": trade.orderStatus.filled,
+            "remaining": trade.orderStatus.remaining,
+            "expiry": getattr(con, "lastTradeDateOrContractMonth", ""),
+            "strike": getattr(con, "strike", 0),
+            "right": getattr(con, "right", ""),
+        })
+
+    print(f"[IBKR] Open orders: {len(result)}")
+    return result
+
+
+def cancel_order(order_id: int) -> dict:
+    """Cancel an open order by order ID."""
+    ib = _get_ib()
+    trades = ib.openTrades()
+
+    for trade in trades:
+        if trade.order.orderId == order_id:
+            ib.cancelOrder(trade.order)
+            ib.sleep(1)
+            print(f"[IBKR-CANCEL] OrderId={order_id} cancelled")
+            return {
+                "order_id": order_id,
+                "status": "CANCELLED",
+                "symbol": trade.contract.symbol,
+            }
+
+    return {"error": f"Order {order_id} not found in open orders"}
+
+
+def get_account_summary() -> dict:
+    """Get account balance, buying power, P&L."""
+    ib = _get_ib()
+    account_values = ib.accountSummary()
+
+    summary = {}
+    keys_we_want = {
+        "NetLiquidation", "TotalCashValue", "BuyingPower",
+        "GrossPositionValue", "MaintMarginReq", "AvailableFunds",
+        "UnrealizedPnL", "RealizedPnL",
+    }
+    for av in account_values:
+        if av.tag in keys_we_want and av.currency == "USD":
+            summary[av.tag] = float(av.value)
+
+    print(f"[IBKR] Account: NLV=${summary.get('NetLiquidation', '?')}")
+    return summary
