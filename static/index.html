@@ -912,7 +912,7 @@
             chatSessionId = Math.random().toString(36).substr(2, 8);
             const msgs = document.getElementById('chatMessages');
             msgs.innerHTML = '';
-            addChatMessage('assistant', "Hey! I'm your TradePilot AI assistant. Ask me anything about stocks, trades, or your account.\n\nTry: \"What's the play on SPY?\" or just type a ticker.");
+            addChatMessage('assistant', "Hey! I'm powered by Claude AI with full access to your 18-layer engine and TastyTrade sandbox.\n\nAsk me anything — \"What's the play on SPY?\", \"Compare AAPL vs MSFT\", \"My balance\", or just drop a ticker.");
             document.getElementById('chatSuggestions').style.display = 'flex';
         }
 
@@ -1019,7 +1019,7 @@
         <div class="chat-header">
             <div>
                 <div class="chat-header-title">TradePilot AI</div>
-                <div class="chat-header-subtitle">Talk to your trading engine</div>
+                <div class="chat-header-subtitle">Powered by Claude AI</div>
             </div>
             <button class="chat-new-btn" onclick="startNewChat()">New Chat</button>
         </div>

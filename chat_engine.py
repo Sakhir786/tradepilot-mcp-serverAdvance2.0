@@ -1,437 +1,465 @@
 """
-TradePilot Conversational AI Chat Engine
-==========================================
-Interprets natural language messages and routes them to the appropriate
-TradePilot endpoints/functions. No external AI API needed — this uses
-pattern matching + the 18-layer engine to generate intelligent responses.
+TradePilot Conversational AI Chat Engine (Claude-Powered)
+==========================================================
+Uses Claude API with tool_use to power natural conversations.
+Claude decides which TradePilot tools to call, interprets results,
+and responds intelligently.
 
 Flow:
-  User message → Intent detection → Route to function → Format response
+  User message → Claude API (with tools) → Tool calls → Results back to Claude → Response
 """
 
-import re
+import os
+import json
 import uuid
+import math
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
+from dotenv import load_dotenv
 
 import database as db
 
+load_dotenv()
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+CLAUDE_MODEL = os.getenv("CLAUDE_CHAT_MODEL", "claude-sonnet-4-20250514")
 
 # ---------------------------------------------------------------------------
-# Intent Detection
+# Claude API Client (lightweight, no SDK dependency needed)
 # ---------------------------------------------------------------------------
 
-# Patterns mapped to intents
-INTENT_PATTERNS = {
-    "analyze": [
-        r"(?:analyze|analysis|analyse|what.?s (?:the )?(?:play|setup|look)|how.?s|check|scan|look at|what about|thoughts on)\s+(\$?[A-Z]{1,5})",
-        r"(\$?[A-Z]{1,5})\s+(?:analysis|setup|play|signal|outlook|look)",
-        r"(?:run|do|get)\s+(?:an?\s+)?(?:analysis|signal|scan)\s+(?:on|for)\s+(\$?[A-Z]{1,5})",
-        r"^(\$[A-Z]{1,5})$",
-        r"^([A-Z]{2,5})\?*$",
-    ],
-    "signal": [
-        r"(?:quick\s+)?signal\s+(?:on|for)\s+(\$?[A-Z]{1,5})",
-        r"(?:what.?s the )?(?:trade|signal|call|play)\s+(?:on|for)\s+(\$?[A-Z]{1,5})",
-        r"(?:should i|can i|do i)\s+(?:buy|sell|trade|short|long)\s+(\$?[A-Z]{1,5})",
-        r"(?:best )?(?:play|trade|move)\s+(?:on|for)\s+(\$?[A-Z]{1,5})",
-    ],
-    "execute": [
-        r"(?:execute|place|send|submit|paper\s*trade|sandbox)\s+(?:it|that|the (?:trade|order|signal))",
-        r"(?:send|place|execute)\s+(?:it|that)\s+(?:on|to)\s+(?:sandbox|tastytrade|tt|paper)",
-        r"(?:yeah|yes|yep|sure|do it|go ahead|send it|place it|execute it)",
-        r"(?:buy|sell)\s+(?:the\s+)?(?:\d+\s*x?\s*)?(\$?[A-Z]{1,5})\s+(?:\$?\d+)\s*(?:call|put|c|p)",
-    ],
-    "positions": [
-        r"(?:my\s+)?positions",
-        r"(?:what.?s|show|get|check)\s+(?:my\s+)?(?:positions|holdings|trades|open\s+trades)",
-        r"(?:am i|what am i)\s+(?:holding|in)",
-    ],
-    "balance": [
-        r"(?:my\s+)?(?:balance|account|buying\s*power|portfolio|money|cash)",
-        r"(?:how\s+(?:much|is))\s+(?:my|in my)\s+(?:account|balance|portfolio)",
-        r"(?:what.?s|show|get|check)\s+(?:my\s+)?(?:balance|account|buying\s*power)",
-    ],
-    "orders": [
-        r"(?:my\s+)?(?:open\s+)?orders",
-        r"(?:show|get|check|list)\s+(?:my\s+)?(?:open\s+)?orders",
-        r"(?:pending|active)\s+orders",
-    ],
-    "scan": [
-        r"(?:scan|screen|compare)\s+((?:\$?[A-Z]{1,5}[\s,]+){2,}(?:\$?[A-Z]{1,5}))",
-        r"(?:what.?s (?:the )?best|compare|which (?:is|one))\s+(?:between|among|of)\s+((?:\$?[A-Z]{1,5}[\s,]+){1,}(?:\$?[A-Z]{1,5}))",
-        r"(?:scan|screen)\s+(?:the\s+)?(?:market|stocks|tickers)",
-    ],
-    "watchlist": [
-        r"(?:show|get|my)\s+watchlist",
-        r"(?:add)\s+(\$?[A-Z]{1,5})\s+(?:to\s+)?(?:my\s+)?watchlist",
-        r"(?:remove|delete)\s+(\$?[A-Z]{1,5})\s+(?:from\s+)?(?:my\s+)?watchlist",
-        r"watchlist",
-    ],
-    "history": [
-        r"(?:my\s+)?(?:trade\s+)?history",
-        r"(?:show|get|check)\s+(?:my\s+)?(?:past|previous|trade\s+)?(?:trades|history|stats|statistics)",
-        r"(?:how\s+(?:have|am)\s+i\s+(?:been\s+)?(?:doing|performed|performing))",
-        r"(?:win\s*rate|performance|pnl|p&l|profit|loss)",
-    ],
-    "mode": [
-        r"(?:switch|change|set|use)\s+(?:to\s+)?(?:mode\s+)?(scalp|swing|intraday|leaps)",
-        r"(scalp|swing|intraday|leaps)\s+mode",
-    ],
-    "help": [
-        r"(?:help|what can you do|commands|how (?:does|do) (?:this|you) work)",
-        r"(?:what|which)\s+(?:commands|things|stuff)\s+(?:can|do)\s+(?:you|i)",
-    ],
-    "greeting": [
-        r"^(?:hi|hello|hey|yo|sup|what.?s up|gm|good morning|good evening)(?:\s|!|\.|$)",
-    ],
-    "status": [
-        r"(?:server|system|engine)\s+(?:status|health|check)",
-        r"(?:is the|are you)\s+(?:server|system|engine)\s+(?:running|online|up)",
-        r"(?:status|health)\s+check",
-    ],
-}
+import httpx
 
-# Mode mapping
-MODE_KEYWORDS = {
-    "scalp": "scalp", "scalping": "scalp",
-    "swing": "swing", "swings": "swing",
-    "intraday": "intraday", "day": "intraday", "daytrade": "intraday",
-    "leaps": "leaps", "leap": "leaps", "long term": "leaps", "longterm": "leaps",
-}
+CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 
 
-def detect_intent(message: str) -> Tuple[str, Dict]:
-    """
-    Detect user intent from natural language message.
-    Returns (intent_name, extracted_params).
-    """
-    msg = message.strip()
-    msg_lower = msg.lower()
+def _call_claude(messages: list, tools: list = None, system: str = "",
+                 max_tokens: int = 2048) -> dict:
+    """Call Claude API directly via HTTP (no SDK needed)."""
+    if not ANTHROPIC_API_KEY:
+        return {"error": "ANTHROPIC_API_KEY not set in .env"}
 
-    # Check for mode in the message
-    mode = None
-    for keyword, mode_val in MODE_KEYWORDS.items():
-        if keyword in msg_lower:
-            mode = mode_val
-            break
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
 
-    # Try each intent pattern
-    for intent, patterns in INTENT_PATTERNS.items():
-        for pattern in patterns:
-            match = re.search(pattern, msg, re.IGNORECASE)
-            if match:
-                params = {"mode": mode}
-                # Extract symbol(s) from match groups
-                if match.groups():
-                    raw = match.group(1)
-                    # Clean up symbols
-                    symbols = [s.strip().strip("$").upper() for s in re.split(r"[,\s]+", raw) if s.strip()]
-                    symbols = [s for s in symbols if 1 <= len(s) <= 5 and s.isalpha()]
-                    if symbols:
-                        params["symbol"] = symbols[0]
-                        if len(symbols) > 1:
-                            params["symbols"] = symbols
-                return intent, params
+    payload = {
+        "model": CLAUDE_MODEL,
+        "max_tokens": max_tokens,
+        "messages": messages,
+    }
+    if system:
+        payload["system"] = system
+    if tools:
+        payload["tools"] = tools
 
-    # Fallback: check if the message is just a ticker
-    ticker_match = re.match(r"^\$?([A-Z]{1,5})\s*\??$", msg)
-    if ticker_match:
-        return "analyze", {"symbol": ticker_match.group(1), "mode": mode}
+    resp = httpx.post(CLAUDE_API_URL, json=payload, headers=headers, timeout=120)
 
-    return "unknown", {"mode": mode}
+    if resp.status_code != 200:
+        return {"error": f"Claude API error {resp.status_code}: {resp.text[:500]}"}
 
-
-def extract_symbol(message: str) -> Optional[str]:
-    """Extract a stock symbol from a message."""
-    match = re.search(r"\$?([A-Z]{1,5})", message.upper())
-    if match:
-        sym = match.group(1)
-        # Filter out common words
-        common_words = {"I", "A", "THE", "AND", "OR", "TO", "IS", "IT", "IN", "ON",
-                        "MY", "ME", "DO", "IF", "AT", "FOR", "OF", "UP", "SO", "NO",
-                        "YES", "OK", "GET", "SET", "RUN", "HOW", "CAN", "AM", "BE"}
-        if sym not in common_words and len(sym) >= 2:
-            return sym
-    return None
+    return resp.json()
 
 
 # ---------------------------------------------------------------------------
-# Response Formatters
+# Tool Definitions (what Claude can call)
 # ---------------------------------------------------------------------------
 
-def format_signal_response(data: dict) -> str:
-    """Format engine analysis result into a chat-friendly message."""
-    if "error" in data or "detail" in data:
-        return f"Could not analyze: {data.get('error', data.get('detail', 'Unknown error'))}"
+TRADEPILOT_TOOLS = [
+    {
+        "name": "analyze_stock",
+        "description": "Run full 18-layer technical + options analysis on a stock. Returns direction (BULLISH/BEARISH/NEUTRAL), confidence, option strike/expiry recommendations, entry/target/stop prices, and reasoning. Use this when the user asks about any stock, wants a signal, or asks what to trade.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "Stock ticker symbol (e.g. SPY, AAPL, TSLA)"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["scalp", "swing", "intraday", "leaps"],
+                    "description": "Trading mode. scalp=0-2 DTE, swing=7-45 DTE (default), intraday=0-1 DTE, leaps=180+ DTE"
+                }
+            },
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "execute_trade",
+        "description": "Execute a trade on TastyTrade sandbox (paper trading) based on the last analysis. Always does a dry-run preview first. Use when user says 'execute', 'send to sandbox', 'paper trade it', 'place the trade', etc.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "confirm": {
+                    "type": "boolean",
+                    "description": "If true, actually places the order. If false (default), shows a dry-run preview."
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "get_account_balance",
+        "description": "Get TastyTrade account balance including cash, buying power, net liquidation value, and P&L.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "get_positions",
+        "description": "Get all current open positions from TastyTrade sandbox account.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "get_orders",
+        "description": "Get all open/pending orders from TastyTrade sandbox account.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "scan_stocks",
+        "description": "Run 18-layer analysis on multiple stocks and compare them. Returns ranked results by win probability. Use when user wants to compare tickers or find the best setup.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbols": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of stock symbols to scan (2-8 tickers)"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["scalp", "swing", "intraday", "leaps"],
+                    "description": "Trading mode (default: swing)"
+                }
+            },
+            "required": ["symbols"]
+        }
+    },
+    {
+        "name": "manage_watchlist",
+        "description": "View, add to, or remove from the watchlist.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["show", "add", "remove"],
+                    "description": "What to do with the watchlist"
+                },
+                "symbol": {
+                    "type": "string",
+                    "description": "Symbol to add or remove (required for add/remove)"
+                }
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "get_trade_history",
+        "description": "Get trade performance statistics: win rate, total P&L, best/worst trades, etc.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "get_news",
+        "description": "Get latest news for a stock symbol.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "Stock ticker symbol"
+                }
+            },
+            "required": ["symbol"]
+        }
+    },
+]
 
-    ticker = data.get("ticker", "?")
-    price = data.get("current_price", 0)
+SYSTEM_PROMPT = """You are TradePilot AI — a conversational trading assistant built into the TradePilot 18-layer analysis engine.
 
-    # Get analysis summary
-    summary = data.get("analysis_summary", {})
-    direction = summary.get("direction", data.get("direction", "NEUTRAL"))
-    action = summary.get("action", data.get("action", "NO_TRADE"))
-    confidence = summary.get("confidence", data.get("confidence", "WEAK"))
-    win_prob = summary.get("win_probability", data.get("win_probability", 0))
-    trade_valid = summary.get("trade_valid", data.get("trade_valid", False))
+You help users analyze stocks, execute paper trades on TastyTrade sandbox, manage their watchlist, and check their account.
 
-    # Options recommendation
-    opt = data.get("option_recommendation", {})
-    strike = opt.get("strike", data.get("strike", 0))
-    delta = opt.get("delta", data.get("delta", 0))
-    expiry_date = opt.get("expiry_date", data.get("expiry_date", ""))
-    expiry_dte = opt.get("expiry_dte", data.get("expiry_dte", 0))
+Key behaviors:
+- When a user mentions a stock ticker (SPY, AAPL, TSLA, etc.), analyze it using the analyze_stock tool
+- When they say "execute", "send to sandbox", "paper trade it" — use execute_trade
+- Keep responses concise and trading-focused
+- Present analysis data clearly: direction, confidence, strike, entry/target/stop
+- After showing analysis, remind them they can execute it on sandbox
+- Default trading mode is "swing" unless the user specifies otherwise
+- You have real data — the 18-layer engine runs actual technical analysis with real market data
+- For execution: always do a dry-run preview first, then the user confirms
 
-    # Execution plan
-    plan = data.get("execution_plan", {})
-    entry = plan.get("entry", data.get("entry_price", 0))
-    target = plan.get("target", data.get("target_price", 0))
-    stop = plan.get("stop", data.get("stop_price", 0))
-    rr = plan.get("risk_reward", data.get("risk_reward", 0))
-    contracts = plan.get("contracts", data.get("contracts_suggested", 1))
-
-    # Reasoning
-    reasoning = data.get("reasoning", [])
-    concerns = data.get("concerns", [])
-
-    # Direction emoji
-    dir_icon = "BULLISH" if "BULL" in direction.upper() else "BEARISH" if "BEAR" in direction.upper() else "NEUTRAL"
-
-    lines = []
-    lines.append(f"**{ticker}** @ ${price:.2f} — **{dir_icon}**")
-    lines.append(f"Confidence: **{confidence}** ({win_prob:.0f}%)")
-    lines.append("")
-
-    if trade_valid and action not in ("FLAT", "NO_TRADE"):
-        lines.append(f"**Action: {action}**")
-        if strike:
-            right = "CALL" if "CALL" in action else "PUT" if "PUT" in action else "?"
-            lines.append(f"Strike: ${strike} {right} | Delta: {delta:.2f}")
-        if expiry_date:
-            lines.append(f"Expiry: {expiry_date} ({expiry_dte} DTE)")
-        lines.append("")
-        if entry:
-            lines.append(f"Entry: ${entry:.2f}")
-        if target:
-            lines.append(f"Target: ${target:.2f}")
-        if stop:
-            lines.append(f"Stop: ${stop:.2f}")
-        if rr:
-            lines.append(f"Risk/Reward: {rr:.1f}:1")
-        if contracts:
-            lines.append(f"Contracts: {contracts}")
-    else:
-        lines.append("**No valid trade setup at this time.**")
-
-    if reasoning:
-        lines.append("")
-        lines.append("**Why:**")
-        for r in reasoning[:4]:
-            lines.append(f"  - {r}")
-
-    if concerns:
-        lines.append("")
-        lines.append("**Watch out:**")
-        for c in concerns[:3]:
-            lines.append(f"  - {c}")
-
-    if trade_valid and action not in ("FLAT", "NO_TRADE"):
-        lines.append("")
-        lines.append('_Say "execute" or "send to sandbox" to paper trade this._')
-
-    return "\n".join(lines)
-
-
-def format_balance_response(data: dict) -> str:
-    """Format TastyTrade balance into chat message."""
-    if "error" in data:
-        return f"Could not get balance: {data['error']}"
-
-    env = data.get("environment", "sandbox").upper()
-    lines = [
-        f"**TastyTrade Account** ({env})",
-        f"Account: {data.get('account', '?')}",
-        "",
-        f"Cash: ${data.get('cash_balance', 0):,.2f}",
-        f"Net Liq: ${data.get('net_liquidating_value', 0):,.2f}",
-        f"Option BP: ${data.get('option_buying_power', 0):,.2f}",
-        f"Equity BP: ${data.get('equity_buying_power', 0):,.2f}",
-    ]
-    return "\n".join(lines)
-
-
-def format_positions_response(positions: list) -> str:
-    """Format TastyTrade positions into chat message."""
-    if not positions:
-        return "No open positions."
-
-    lines = [f"**Open Positions** ({len(positions)} total)", ""]
-    for p in positions:
-        sym = p.get("symbol", "?")
-        qty = p.get("quantity", 0)
-        direction = p.get("direction", "")
-        avg = p.get("avg_open_price", 0)
-        mark = p.get("mark_price", 0)
-        pnl = (mark - avg) * qty * p.get("multiplier", 100) if avg else 0
-        pnl_str = f"+${pnl:,.2f}" if pnl >= 0 else f"-${abs(pnl):,.2f}"
-        lines.append(f"  {direction} {qty}x **{sym}** @ ${avg:.2f} → ${mark:.2f} ({pnl_str})")
-
-    return "\n".join(lines)
-
-
-def format_orders_response(orders: list) -> str:
-    """Format TastyTrade orders into chat message."""
-    if not orders:
-        return "No open orders."
-
-    lines = [f"**Open Orders** ({len(orders)} total)", ""]
-    for o in orders:
-        oid = o.get("order_id", "?")
-        status = o.get("status", "?")
-        price = o.get("price", "MKT")
-        legs = o.get("legs", [])
-        leg_str = ", ".join(f"{l.get('action')} {l.get('quantity')}x {l.get('symbol', '?')}" for l in legs)
-        lines.append(f"  #{oid} [{status}] {leg_str} @ {price}")
-
-    return "\n".join(lines)
-
-
-def format_execution_response(data: dict) -> str:
-    """Format trade execution result."""
-    if "error" in data:
-        reason = data.get("reason", data.get("detail", "Unknown"))
-        return f"Could not execute: {data['error']} — {reason}"
-
-    if data.get("dry_run"):
-        lines = [
-            "**Dry Run Preview (not executed)**",
-            f"Symbol: {data.get('symbol', '?')}",
-            f"Contract: {data.get('occ_symbol', '?')}",
-            f"Action: {data.get('action', '?')}",
-            f"Qty: {data.get('quantity', '?')}",
-            f"Price: ${data.get('limit_price', 'MKT')}",
-            f"BP Impact: ${data.get('buying_power_effect', 0):,.2f}",
-        ]
-        if data.get("warnings"):
-            lines.append(f"Warnings: {', '.join(data['warnings'])}")
-        lines.append("")
-        lines.append('_Say "confirm" or "go ahead" to place the trade._')
-        return "\n".join(lines)
-
-    lines = [
-        "**Trade Placed!**",
-        f"Order ID: {data.get('order_id', '?')}",
-        f"Status: {data.get('status', '?')}",
-        f"Symbol: {data.get('symbol', '?')} ({data.get('occ_symbol', '')})",
-        f"Action: {data.get('action', '?')}",
-        f"Qty: {data.get('quantity', '?')}",
-        f"Price: ${data.get('limit_price', 'MKT')}",
-        f"Env: {data.get('environment', 'sandbox').upper()}",
-    ]
-
-    signal = data.get("engine_signal", {})
-    if signal:
-        lines.append("")
-        lines.append(f"Engine: {signal.get('direction', '')} {signal.get('confidence', '')} ({signal.get('win_probability', 0):.0f}%)")
-
-    return "\n".join(lines)
-
-
-def format_scan_response(results: list) -> str:
-    """Format multi-ticker scan results."""
-    if not results:
-        return "No scan results."
-
-    lines = ["**Multi-Ticker Scan Results**", ""]
-    for r in results:
-        ticker = r.get("ticker", "?")
-        direction = r.get("direction", "?")
-        confidence = r.get("confidence", "?")
-        prob = r.get("win_probability", 0)
-        action = r.get("action", "?")
-        icon = "UP" if "BULL" in str(direction).upper() else "DOWN" if "BEAR" in str(direction).upper() else "--"
-        lines.append(f"  {icon} **{ticker}** — {direction} {confidence} ({prob:.0f}%) → {action}")
-
-    return "\n".join(lines)
-
-
-def format_watchlist_response(watchlist: list) -> str:
-    """Format watchlist."""
-    if not watchlist:
-        return "Your watchlist is empty. Say \"add AAPL to watchlist\" to start."
-
-    lines = [f"**Watchlist** ({len(watchlist)} symbols)", ""]
-    for w in watchlist:
-        lines.append(f"  - {w['symbol']}")
-    return "\n".join(lines)
-
-
-def format_history_response(stats: dict) -> str:
-    """Format trade stats/history."""
-    if not stats or not stats.get("total_trades"):
-        return "No trade history yet."
-
-    lines = [
-        "**Trade Performance**",
-        "",
-        f"Total Trades: {stats.get('total_trades', 0)}",
-        f"Open: {stats.get('open_trades', 0)} | Closed: {stats.get('closed_trades', 0)}",
-        f"Wins: {stats.get('wins', 0)} | Losses: {stats.get('losses', 0)}",
-        f"Win Rate: {stats.get('win_rate', 0):.1f}%",
-        f"Total P&L: ${stats.get('total_pnl', 0):,.2f}",
-        f"Avg P&L: {stats.get('avg_pnl_pct', 0):.1f}%",
-        f"Best Trade: ${stats.get('best_trade', 0):,.2f}",
-        f"Worst Trade: ${stats.get('worst_trade', 0):,.2f}",
-    ]
-    return "\n".join(lines)
-
-
-HELP_TEXT = """**TradePilot AI Chat**
-
-Just talk to me naturally! Here's what I can do:
-
-**Analyze stocks:**
-  "What's the play on SPY?"
-  "Analyze TSLA for swing"
-  "AAPL signal"
-  "$NVDA"
-
-**Execute trades (sandbox):**
-  "Send it to sandbox"
-  "Execute that trade"
-  "Paper trade it"
-
-**Account info:**
-  "My balance"
-  "Show positions"
-  "Open orders"
-
-**Scan multiple tickers:**
-  "Compare SPY QQQ IWM"
-  "Scan AAPL MSFT GOOGL AMZN"
-
-**Watchlist:**
-  "Show watchlist"
-  "Add TSLA to watchlist"
-
-**History:**
-  "My trade history"
-  "How am I doing?"
-  "Win rate"
-
-**Modes:**
-  "Switch to scalp mode"
-  "Use leaps mode"
-
-Just type a ticker symbol to get started!
+Personality: Direct, knowledgeable, trader-to-trader. Skip fluff. Lead with the signal.
 """
 
-GREETING_RESPONSES = [
-    "Hey! Ready to find some trades. What ticker are you looking at?",
-    "What's up! Drop a ticker and I'll run the 18-layer analysis.",
-    "Hey! TradePilot AI at your service. What symbol should I analyze?",
-]
+
+# ---------------------------------------------------------------------------
+# Tool Execution (server-side)
+# ---------------------------------------------------------------------------
+
+def _convert_numpy(obj):
+    """Convert numpy types for JSON serialization."""
+    try:
+        import numpy as np
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        elif isinstance(obj, (np.integer,)):
+            return int(obj)
+        elif isinstance(obj, (np.floating,)):
+            val = float(obj)
+            return None if (math.isnan(val) or math.isinf(val)) else val
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+    except ImportError:
+        pass
+
+    if isinstance(obj, dict):
+        return {k: _convert_numpy(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_convert_numpy(item) for item in obj]
+    elif isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    return obj
+
+
+# Lazy-loaded engine and TastyTrade
+_engine_instance = None
+
+
+def _get_engine():
+    global _engine_instance
+    try:
+        from tradepilot_integration.engine_18layer_core import TradePilotEngine18Layer, TradeMode
+        from config import DATA_SOURCE
+        if DATA_SOURCE == "ibkr":
+            from ibkr_client import get_candles_for_mode, get_full_option_chain_snapshot, get_market_context
+        else:
+            from polygon_client import get_candles_for_mode, get_full_option_chain_snapshot, get_market_context
+
+        if _engine_instance is None:
+            _engine_instance = TradePilotEngine18Layer()
+
+        return {
+            "engine": _engine_instance,
+            "TradeMode": TradeMode,
+            "get_candles_for_mode": get_candles_for_mode,
+            "get_full_option_chain_snapshot": get_full_option_chain_snapshot,
+            "get_market_context": get_market_context,
+        }
+    except ImportError as e:
+        return {"error": str(e)}
+
+
+def _get_tt():
+    try:
+        from tastytrade_client import (
+            tt_get_account_balance,
+            tt_get_positions,
+            tt_get_orders,
+            tt_execute_signal,
+            tt_status,
+        )
+        return {
+            "tt_get_account_balance": tt_get_account_balance,
+            "tt_get_positions": tt_get_positions,
+            "tt_get_orders": tt_get_orders,
+            "tt_execute_signal": tt_execute_signal,
+            "tt_status": tt_status,
+        }
+    except ImportError:
+        return None
+
+
+def _run_analysis(symbol: str, mode: str = "swing") -> dict:
+    """Run 18-layer analysis."""
+    e = _get_engine()
+    if "error" in e:
+        return {"error": f"Engine not available: {e['error']}"}
+
+    engine = e["engine"]
+    TradeMode = e["TradeMode"]
+    mode_map = {
+        "scalp": TradeMode.SCALP,
+        "swing": TradeMode.SWING,
+        "intraday": TradeMode.INTRADAY,
+        "leaps": TradeMode.LEAPS,
+    }
+    trade_mode = mode_map.get(mode, TradeMode.SWING)
+
+    candles_data = e["get_candles_for_mode"](symbol, mode=mode)
+    if not candles_data or "results" not in candles_data:
+        return {"error": f"Could not fetch data for {symbol}"}
+    if len(candles_data.get("results", [])) < 50:
+        return {"error": f"Insufficient data for {symbol}"}
+
+    mode_config = candles_data.get("_mode_config", {})
+    tf = f"{mode_config.get('multiplier', 1)}{mode_config.get('timespan', 'day')[0]}"
+
+    options_data = None
+    try:
+        options_data = e["get_full_option_chain_snapshot"](symbol, limit=100)
+    except Exception:
+        pass
+
+    market_ctx = {}
+    try:
+        market_ctx = e["get_market_context"](mode=mode)
+    except Exception:
+        pass
+
+    result = engine.analyze(
+        ticker=symbol,
+        candles_data=candles_data,
+        options_data=options_data,
+        mode=trade_mode,
+        timeframe=tf,
+        market_context=market_ctx,
+    )
+    return _convert_numpy(engine.to_dict(result))
+
+
+def execute_tool(tool_name: str, tool_input: dict, session: "ChatSession") -> dict:
+    """Execute a tool call and return the result."""
+
+    if tool_name == "analyze_stock":
+        symbol = tool_input.get("symbol", "").upper()
+        mode = tool_input.get("mode", session.mode or "swing")
+        data = _run_analysis(symbol, mode)
+        if "error" not in data:
+            session.last_analysis = data
+            session.last_symbol = symbol
+            # Return a condensed version for Claude to interpret
+            summary = data.get("analysis_summary", {})
+            opt = data.get("option_recommendation", {})
+            plan = data.get("execution_plan", {})
+            return {
+                "ticker": data.get("ticker"),
+                "current_price": data.get("current_price"),
+                "direction": summary.get("direction"),
+                "action": summary.get("action"),
+                "confidence": summary.get("confidence"),
+                "win_probability": summary.get("win_probability"),
+                "trade_valid": summary.get("trade_valid"),
+                "strike": opt.get("strike"),
+                "delta": opt.get("delta"),
+                "expiry_date": opt.get("expiry_date"),
+                "expiry_dte": opt.get("expiry_dte"),
+                "entry": plan.get("entry"),
+                "target": plan.get("target"),
+                "stop": plan.get("stop"),
+                "risk_reward": plan.get("risk_reward"),
+                "contracts": plan.get("contracts"),
+                "reasoning": data.get("reasoning", [])[:5],
+                "concerns": data.get("concerns", [])[:3],
+                "market_context": data.get("market_context", {}),
+            }
+        return data
+
+    elif tool_name == "execute_trade":
+        if not session.last_analysis:
+            return {"error": "No analysis to execute. Analyze a stock first."}
+        tt = _get_tt()
+        if not tt:
+            return {"error": "TastyTrade not configured. Set TASTYTRADE_USERNAME and TASTYTRADE_PASSWORD in .env"}
+        confirm = tool_input.get("confirm", False)
+        try:
+            result = tt["tt_execute_signal"](
+                session.last_analysis,
+                dry_run=not confirm,
+            )
+            return _convert_numpy(result)
+        except Exception as e:
+            return {"error": f"Execution failed: {str(e)}"}
+
+    elif tool_name == "get_account_balance":
+        tt = _get_tt()
+        if not tt:
+            return {"error": "TastyTrade not configured."}
+        try:
+            return _convert_numpy(tt["tt_get_account_balance"]())
+        except Exception as e:
+            return {"error": str(e)}
+
+    elif tool_name == "get_positions":
+        tt = _get_tt()
+        if not tt:
+            return {"error": "TastyTrade not configured."}
+        try:
+            return {"positions": tt["tt_get_positions"]()}
+        except Exception as e:
+            return {"error": str(e)}
+
+    elif tool_name == "get_orders":
+        tt = _get_tt()
+        if not tt:
+            return {"error": "TastyTrade not configured."}
+        try:
+            return {"orders": tt["tt_get_orders"]()}
+        except Exception as e:
+            return {"error": str(e)}
+
+    elif tool_name == "scan_stocks":
+        symbols = tool_input.get("symbols", [])
+        mode = tool_input.get("mode", session.mode or "swing")
+        results = []
+        for sym in symbols[:8]:
+            try:
+                data = _run_analysis(sym.upper(), mode)
+                data = _convert_numpy(data)
+                summary = data.get("analysis_summary", {})
+                results.append({
+                    "ticker": sym.upper(),
+                    "direction": summary.get("direction", "ERROR"),
+                    "action": summary.get("action", "ERROR"),
+                    "confidence": summary.get("confidence", "N/A"),
+                    "win_probability": summary.get("win_probability", 0),
+                })
+            except Exception:
+                results.append({"ticker": sym.upper(), "direction": "ERROR", "error": "Analysis failed"})
+        return {"scan_results": results}
+
+    elif tool_name == "manage_watchlist":
+        action = tool_input.get("action", "show")
+        symbol = tool_input.get("symbol", "").upper()
+        if action == "show":
+            return {"watchlist": db.get_watchlist()}
+        elif action == "add" and symbol:
+            return db.add_to_watchlist(symbol)
+        elif action == "remove" and symbol:
+            return db.remove_from_watchlist(symbol)
+        return {"error": "Invalid watchlist action"}
+
+    elif tool_name == "get_trade_history":
+        return db.get_trade_stats()
+
+    elif tool_name == "get_news":
+        symbol = tool_input.get("symbol", "").upper()
+        try:
+            from polygon_client import get_news
+            data = get_news(symbol)
+            results = data.get("results", [])[:5]
+            return {"news": [{"title": n.get("title"), "published": n.get("published_utc"), "author": n.get("author")} for n in results]}
+        except Exception as e:
+            return {"error": str(e)}
+
+    return {"error": f"Unknown tool: {tool_name}"}
 
 
 # ---------------------------------------------------------------------------
@@ -444,17 +472,41 @@ class ChatSession:
     def __init__(self, session_id: str = None):
         self.session_id = session_id or str(uuid.uuid4())[:8]
         self.mode = "swing"
-        self.last_analysis = None  # Store last analysis result for "execute" commands
+        self.last_analysis = None
         self.last_symbol = None
-        self._greeting_idx = 0
+        self.conversation_history: List[dict] = []  # Claude message format
 
-    def get_greeting(self) -> str:
-        resp = GREETING_RESPONSES[self._greeting_idx % len(GREETING_RESPONSES)]
-        self._greeting_idx += 1
-        return resp
+    def add_user_message(self, content: str):
+        self.conversation_history.append({"role": "user", "content": content})
+
+    def add_assistant_message(self, content):
+        """content can be str or list of content blocks."""
+        if isinstance(content, str):
+            self.conversation_history.append({"role": "assistant", "content": content})
+        else:
+            self.conversation_history.append({"role": "assistant", "content": content})
+
+    def add_tool_result(self, tool_use_id: str, result: dict):
+        self.conversation_history.append({
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": json.dumps(result, default=str)[:8000],  # Cap size
+            }]
+        })
+
+    def get_messages(self, max_turns: int = 20) -> list:
+        """Get recent conversation history for Claude API."""
+        # Keep last N messages to stay within context
+        msgs = self.conversation_history[-max_turns * 2:]
+        # Ensure first message is from user
+        while msgs and msgs[0]["role"] != "user":
+            msgs.pop(0)
+        return msgs
 
 
-# Global session store (in-memory, keyed by session_id)
+# Global session store
 _sessions: Dict[str, ChatSession] = {}
 
 
@@ -466,192 +518,151 @@ def get_or_create_session(session_id: str = None) -> ChatSession:
     session = ChatSession(session_id)
     _sessions[session.session_id] = session
 
-    # Persist to DB
     try:
         db.create_chat_session(session.session_id)
     except Exception:
-        pass  # Already exists
+        pass
 
     return session
 
 
+# ---------------------------------------------------------------------------
+# Main Chat Processing
+# ---------------------------------------------------------------------------
+
 def process_message(session_id: str, message: str) -> Dict:
     """
-    Main entry point: process a user message and return a response.
+    Process a user message through Claude API with tool use.
 
     Returns:
         {
             "session_id": str,
-            "response": str,
-            "intent": str,
-            "tool_used": str,     # which internal tool was called
-            "tool_data": dict,    # raw data from the tool
-            "needs_action": str,  # "execute", "confirm", etc. or ""
+            "response": str,         # Claude's text response
+            "tool_used": str,        # which tool was called (if any)
+            "tool_data": dict,       # raw data from the tool (for UI)
+            "has_analysis": bool,    # if analysis data is available for chart
+            "analysis_data": dict,   # full analysis data for rendering
         }
     """
     session = get_or_create_session(session_id)
-    intent, params = detect_intent(message)
-
-    # Apply mode if found in message
-    if params.get("mode"):
-        session.mode = params["mode"]
-
-    # Use last symbol if none found
-    if not params.get("symbol") and session.last_symbol:
-        if intent in ("analyze", "signal"):
-            # Only use last symbol if the message doesn't look like it has one
-            pass  # Don't auto-fill for these — require explicit symbol
-        elif intent == "execute":
-            params["symbol"] = session.last_symbol
 
     result = {
         "session_id": session.session_id,
         "response": "",
-        "intent": intent,
         "tool_used": "",
         "tool_data": {},
-        "needs_action": "",
+        "has_analysis": False,
+        "analysis_data": None,
     }
 
-    # --- Route to handler ---
+    # Check if Claude API is configured
+    if not ANTHROPIC_API_KEY:
+        result["response"] = (
+            "**Claude API not configured.**\n\n"
+            "Add your API key to `.env`:\n"
+            "```\nANTHROPIC_API_KEY=sk-ant-...\n```\n"
+            "Get one at: https://console.anthropic.com/settings/keys"
+        )
+        return result
 
-    if intent == "greeting":
-        result["response"] = session.get_greeting()
+    # Add user message to conversation
+    session.add_user_message(message)
 
-    elif intent == "help":
-        result["response"] = HELP_TEXT
-
-    elif intent == "mode":
-        mode = params.get("mode", "swing")
-        session.mode = mode
-        result["response"] = f"Mode switched to **{mode.upper()}**. All future analyses will use {mode} settings."
-        result["tool_used"] = "mode_switch"
-
-    elif intent in ("analyze", "signal"):
-        symbol = params.get("symbol")
-        if not symbol:
-            result["response"] = "Which ticker? Just type a symbol like SPY, AAPL, or TSLA."
-            return result
-
-        result["tool_used"] = "engine18_analyze"
-        result["tool_data"] = {
-            "action": "analyze",
-            "symbol": symbol,
-            "mode": session.mode,
-        }
-        result["response"] = f"Analyzing **{symbol}** in {session.mode} mode..."
-        result["needs_action"] = "run_analysis"
-        session.last_symbol = symbol
-
-    elif intent == "execute":
-        if session.last_analysis and session.last_analysis.get("analysis_summary", {}).get("trade_valid"):
-            result["tool_used"] = "tt_execute"
-            result["tool_data"] = {
-                "action": "execute",
-                "analysis": session.last_analysis,
-                "dry_run": True,  # Always preview first
-            }
-            result["response"] = "Previewing trade on TastyTrade sandbox..."
-            result["needs_action"] = "run_execute_preview"
-        elif session.last_analysis:
-            result["response"] = "The last analysis didn't produce a valid trade signal. Try another ticker or timeframe."
-        else:
-            result["response"] = "No analysis to execute. Analyze a ticker first! e.g., \"What's the play on SPY?\""
-
-    elif intent == "positions":
-        result["tool_used"] = "tt_positions"
-        result["tool_data"] = {"action": "positions"}
-        result["response"] = "Fetching your positions..."
-        result["needs_action"] = "run_positions"
-
-    elif intent == "balance":
-        result["tool_used"] = "tt_balance"
-        result["tool_data"] = {"action": "balance"}
-        result["response"] = "Checking your account..."
-        result["needs_action"] = "run_balance"
-
-    elif intent == "orders":
-        result["tool_used"] = "tt_orders"
-        result["tool_data"] = {"action": "orders"}
-        result["response"] = "Fetching open orders..."
-        result["needs_action"] = "run_orders"
-
-    elif intent == "scan":
-        symbols = params.get("symbols", [])
-        if not symbols and params.get("symbol"):
-            symbols = [params["symbol"]]
-        if len(symbols) < 2:
-            result["response"] = "Give me 2+ symbols to compare. e.g., \"Compare SPY QQQ IWM AAPL\""
-            return result
-
-        result["tool_used"] = "engine18_scan"
-        result["tool_data"] = {
-            "action": "scan",
-            "symbols": symbols,
-            "mode": session.mode,
-        }
-        result["response"] = f"Scanning {', '.join(symbols)}..."
-        result["needs_action"] = "run_scan"
-
-    elif intent == "watchlist":
-        # Check for add/remove
-        add_match = re.search(r"add\s+(\$?[A-Z]{1,5})", message, re.IGNORECASE)
-        remove_match = re.search(r"(?:remove|delete)\s+(\$?[A-Z]{1,5})", message, re.IGNORECASE)
-
-        if add_match:
-            sym = add_match.group(1).strip("$").upper()
-            result["tool_used"] = "watchlist_add"
-            result["tool_data"] = {"action": "add", "symbol": sym}
-            result["needs_action"] = "run_watchlist_add"
-            result["response"] = f"Adding {sym} to watchlist..."
-        elif remove_match:
-            sym = remove_match.group(1).strip("$").upper()
-            result["tool_used"] = "watchlist_remove"
-            result["tool_data"] = {"action": "remove", "symbol": sym}
-            result["needs_action"] = "run_watchlist_remove"
-            result["response"] = f"Removing {sym} from watchlist..."
-        else:
-            result["tool_used"] = "watchlist_show"
-            result["tool_data"] = {"action": "show"}
-            result["needs_action"] = "run_watchlist_show"
-            result["response"] = "Loading watchlist..."
-
-    elif intent == "history":
-        result["tool_used"] = "trade_stats"
-        result["tool_data"] = {"action": "history"}
-        result["needs_action"] = "run_history"
-        result["response"] = "Pulling up your stats..."
-
-    elif intent == "status":
-        result["tool_used"] = "system_status"
-        result["tool_data"] = {"action": "status"}
-        result["needs_action"] = "run_status"
-        result["response"] = "Checking system status..."
-
-    else:
-        # Unknown intent — try to extract a symbol
-        symbol = extract_symbol(message)
-        if symbol:
-            result["tool_used"] = "engine18_analyze"
-            result["tool_data"] = {"action": "analyze", "symbol": symbol, "mode": session.mode}
-            result["response"] = f"Analyzing **{symbol}** in {session.mode} mode..."
-            result["needs_action"] = "run_analysis"
-            session.last_symbol = symbol
-        else:
-            result["response"] = (
-                "I'm not sure what you mean. Try:\n"
-                "  - A ticker symbol like **SPY** or **$TSLA**\n"
-                "  - \"What's the play on AAPL?\"\n"
-                "  - \"My balance\" or \"My positions\"\n"
-                "  - \"help\" for all commands"
-            )
-
-    # Save messages to DB
+    # Save user message to DB
     db.save_chat_message(session.session_id, "user", message)
-    db.save_chat_message(
-        session.session_id, "assistant", result["response"],
-        tool_used=result["tool_used"],
-        tool_data=result["tool_data"]
-    )
+
+    # Call Claude with tools
+    try:
+        response = _call_claude(
+            messages=session.get_messages(),
+            tools=TRADEPILOT_TOOLS,
+            system=SYSTEM_PROMPT,
+        )
+
+        if "error" in response:
+            result["response"] = f"AI Error: {response['error']}"
+            return result
+
+        # Process response — handle tool use loop
+        max_tool_rounds = 5
+        rounds = 0
+
+        while rounds < max_tool_rounds:
+            rounds += 1
+            content_blocks = response.get("content", [])
+            stop_reason = response.get("stop_reason", "")
+
+            # Check if Claude wants to use tools
+            if stop_reason == "tool_use":
+                # Save assistant's response (with tool_use blocks)
+                session.add_assistant_message(content_blocks)
+
+                # Execute each tool call
+                for block in content_blocks:
+                    if block.get("type") == "tool_use":
+                        tool_name = block["name"]
+                        tool_input = block.get("input", {})
+                        tool_id = block["id"]
+
+                        # Execute the tool
+                        tool_result = execute_tool(tool_name, tool_input, session)
+
+                        # Track what was used
+                        result["tool_used"] = tool_name
+                        result["tool_data"] = tool_result
+
+                        # If it was an analysis, store for chart rendering
+                        if tool_name == "analyze_stock" and session.last_analysis:
+                            result["has_analysis"] = True
+                            result["analysis_data"] = session.last_analysis
+
+                        # Feed result back to Claude
+                        session.add_tool_result(tool_id, tool_result)
+
+                # Call Claude again with tool results
+                response = _call_claude(
+                    messages=session.get_messages(),
+                    tools=TRADEPILOT_TOOLS,
+                    system=SYSTEM_PROMPT,
+                )
+
+                if "error" in response:
+                    result["response"] = f"AI Error: {response['error']}"
+                    return result
+
+            else:
+                # Claude is done — extract text response
+                text_parts = []
+                for block in content_blocks:
+                    if block.get("type") == "text":
+                        text_parts.append(block["text"])
+
+                final_response = "\n".join(text_parts)
+                session.add_assistant_message(final_response)
+                result["response"] = final_response
+
+                # Save to DB
+                db.save_chat_message(
+                    session.session_id, "assistant", final_response,
+                    tool_used=result["tool_used"],
+                    tool_data=result["tool_data"]
+                )
+
+                # Update session title on first analysis
+                if session.last_symbol:
+                    try:
+                        db.update_chat_session_title(session.session_id, f"Chat: {session.last_symbol}")
+                    except Exception:
+                        pass
+
+                break
+
+        if not result["response"]:
+            result["response"] = "I processed your request but didn't generate a response. Try again?"
+
+    except Exception as e:
+        import traceback
+        print(f"[Chat] Error: {traceback.format_exc()}")
+        result["response"] = f"Something went wrong: {str(e)}"
 
     return result
