@@ -872,7 +872,10 @@ async def get_strategies(
     """
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from polygon_client import analyze_with_strategies
+    if DATA_SOURCE == "ibkr":
+        from ibkr_client import analyze_with_strategies
+    else:
+        from polygon_client import analyze_with_strategies
 
     try:
         result = analyze_with_strategies(symbol.upper(), mode.lower())
@@ -983,7 +986,7 @@ if DATA_SOURCE == "ibkr":
 
     @router.post("/close")
     async def close_position_endpoint(req: CloseRequest):
-        """Close an existing position."""
+        """Close an existing position and update trade record in DB."""
         try:
             from ibkr_client import close_position
             result = close_position(
@@ -994,6 +997,20 @@ if DATA_SOURCE == "ibkr":
             )
             if "error" in result:
                 raise HTTPException(status_code=404, detail=result["error"])
+
+            # Update DB: find matching trade by symbol and close it
+            try:
+                import database as db
+                open_trades = db.get_live_trades(status="OPEN", symbol=req.symbol)
+                if open_trades:
+                    # Close the most recent matching trade
+                    trade = open_trades[0]
+                    fill_price = result.get("avg_fill_price", 0)
+                    close_reason = "MANUAL_CLOSE"
+                    db.close_live_trade(trade["order_id"], fill_price, close_reason)
+            except Exception as e:
+                print(f"[Router] Close DB update warning: {e}")
+
             return result
         except HTTPException:
             raise
@@ -1327,3 +1344,125 @@ if DATA_SOURCE == "ibkr":
             return db.get_trade_stats()
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Stats failed: {str(e)}")
+
+    class ExecuteStrategyRequest(BaseModel):
+        symbol: str = Field(..., description="Stock symbol")
+        mode: str = Field("swing", description="Trading mode")
+        strategy_name: str = Field(..., description="Strategy: long_call, long_put, bull_call_spread, bear_put_spread, bull_put_spread, bear_call_spread")
+        quantity: int = Field(1, ge=1)
+        order_type: str = Field("LMT", description="LMT or MKT")
+
+    class PreTradeCheckRequest(BaseModel):
+        cost_estimate: float = Field(..., description="Estimated trade cost in dollars")
+        max_portfolio_pct: float = Field(5.0, description="Max % of NLV for single trade")
+        max_positions: int = Field(10, description="Max open positions")
+        min_buying_power_pct: float = Field(20.0, description="Min buying power % to keep")
+
+    @router.post("/execute/strategy")
+    async def execute_strategy_endpoint(req: ExecuteStrategyRequest):
+        """
+        Fetch strategies for a symbol, then auto-execute the chosen one.
+        Combines /strategies + order placement in one call.
+        """
+        try:
+            from ibkr_client import analyze_with_strategies, execute_strategy
+
+            strategies_result = analyze_with_strategies(req.symbol.upper(), req.mode)
+            if "error" in strategies_result:
+                raise HTTPException(status_code=400, detail=strategies_result["error"])
+
+            exec_result = execute_strategy(
+                strategy_result=strategies_result,
+                strategy_name=req.strategy_name,
+                quantity=req.quantity,
+                order_type=req.order_type,
+            )
+
+            if "error" in exec_result:
+                raise HTTPException(status_code=400, detail=exec_result["error"])
+
+            # Record in DB
+            try:
+                import database as db
+                strat = strategies_result["strategies"].get(req.strategy_name, {})
+                order_id = exec_result.get("order_id", 0)
+                details = strat.get("details", {})
+                is_spread = "long" in details
+                right = "C" if "call" in req.strategy_name else "P"
+
+                if is_spread:
+                    strike = details.get("long", {}).get("strike", 0)
+                    expiry = details.get("long", {}).get("expiry", "")
+                    entry = strat.get("cost", strat.get("credit", 0)) / 100
+                else:
+                    strike = details.get("strike", 0)
+                    expiry = details.get("expiry", "")
+                    entry = details.get("price", 0)
+
+                db.save_live_trade(
+                    order_id=order_id,
+                    symbol=req.symbol.upper(),
+                    mode=req.mode,
+                    action="BUY" if strat.get("type") == "DEBIT" else "SELL",
+                    right=right,
+                    strike=strike,
+                    expiry=expiry,
+                    quantity=req.quantity,
+                    entry_price=entry,
+                    confidence=req.strategy_name,
+                    signal_data=strat,
+                )
+            except Exception as e:
+                print(f"[Router] Strategy trade record warning: {e}")
+
+            return convert_numpy_types({
+                "strategy": req.strategy_name,
+                "strategy_details": strategies_result["strategies"].get(req.strategy_name),
+                "execution": exec_result,
+            })
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Execute strategy failed: {str(e)}")
+
+    @router.post("/pre-trade-check")
+    async def pre_trade_check_endpoint(req: PreTradeCheckRequest):
+        """
+        Pre-trade risk gate. AI MUST call this before every trade.
+        Returns approved/denied with reasons.
+        """
+        try:
+            from ibkr_client import pre_trade_check
+            return pre_trade_check(
+                cost_estimate=req.cost_estimate,
+                max_portfolio_pct=req.max_portfolio_pct,
+                max_positions=req.max_positions,
+                min_buying_power_pct=req.min_buying_power_pct,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Pre-trade check failed: {str(e)}")
+
+    @router.get("/dashboard")
+    async def dashboard():
+        """
+        Single-call dashboard: account + positions + P&L + risk + orders.
+        AI calls this once for full situational awareness.
+        """
+        try:
+            from ibkr_client import get_dashboard
+            return get_dashboard()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Dashboard failed: {str(e)}")
+
+    @router.post("/sync")
+    async def sync_orders():
+        """
+        Reconcile IBKR order state with local DB.
+        Call periodically to catch fills/cancels that happened while disconnected.
+        """
+        try:
+            from ibkr_client import sync_order_status
+            return sync_order_status()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")

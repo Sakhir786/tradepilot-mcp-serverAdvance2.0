@@ -1642,3 +1642,536 @@ def cancel_all_orders() -> dict:
     ib.sleep(1)
     print("[IBKR-CANCEL-ALL] Global cancel requested")
     return {"status": "GLOBAL_CANCEL_SENT", "timestamp": datetime.now().isoformat()}
+
+
+def pre_trade_check(
+    cost_estimate: float,
+    max_portfolio_pct: float = 5.0,
+    max_positions: int = 10,
+    min_buying_power_pct: float = 20.0,
+) -> dict:
+    """
+    Pre-trade risk gate. AI should call this BEFORE every trade.
+
+    Args:
+        cost_estimate: Estimated cost of the trade (debit * 100 * quantity)
+        max_portfolio_pct: Max % of NLV for a single trade (default 5%)
+        max_positions: Max open positions allowed (default 10)
+        min_buying_power_pct: Min buying power % to keep (default 20%)
+
+    Returns:
+        Dict with approved/denied + reasons.
+    """
+    account = get_account_summary()
+    nlv = account.get("NetLiquidation", 0)
+    buying_power = account.get("BuyingPower", 0)
+
+    positions = get_positions()
+    open_count = sum(1 for p in positions if p["quantity"] != 0)
+
+    warnings = []
+    blocked = False
+
+    # Check position limit
+    if open_count >= max_positions:
+        warnings.append(f"BLOCKED: {open_count} open positions (max {max_positions})")
+        blocked = True
+
+    # Check position size vs NLV
+    if nlv > 0:
+        pct_of_nlv = (cost_estimate / nlv) * 100
+        if pct_of_nlv > max_portfolio_pct:
+            warnings.append(
+                f"BLOCKED: Trade is {pct_of_nlv:.1f}% of NLV (max {max_portfolio_pct}%)"
+            )
+            blocked = True
+    else:
+        warnings.append("BLOCKED: Cannot determine NLV")
+        blocked = True
+
+    # Check buying power
+    if nlv > 0:
+        bp_after = buying_power - cost_estimate
+        bp_pct_after = (bp_after / nlv) * 100
+        if bp_pct_after < min_buying_power_pct:
+            warnings.append(
+                f"BLOCKED: Buying power would drop to {bp_pct_after:.0f}% "
+                f"(min {min_buying_power_pct}%)"
+            )
+            blocked = True
+
+    # Check if enough buying power at all
+    if cost_estimate > buying_power:
+        warnings.append(
+            f"BLOCKED: Cost ${cost_estimate:,.0f} exceeds buying power ${buying_power:,.0f}"
+        )
+        blocked = True
+
+    return {
+        "approved": not blocked,
+        "cost_estimate": cost_estimate,
+        "account": {
+            "nlv": nlv,
+            "buying_power": buying_power,
+            "open_positions": open_count,
+        },
+        "pct_of_nlv": round((cost_estimate / nlv * 100), 1) if nlv > 0 else 0,
+        "warnings": warnings,
+    }
+
+
+def get_dashboard() -> dict:
+    """
+    Single-call dashboard: account + positions + P&L + risk + open orders.
+    One endpoint for AI to get full situational awareness.
+    """
+    account = get_account_summary()
+    positions_pnl = get_position_pnl()
+    risk = get_portfolio_risk()
+    orders = get_open_orders()
+
+    total_unrealized = sum(p.get("unrealized_pnl", 0) for p in positions_pnl)
+
+    return {
+        "account": account,
+        "positions": positions_pnl,
+        "positions_count": len(positions_pnl),
+        "total_unrealized_pnl": round(total_unrealized, 2),
+        "open_orders": orders,
+        "open_orders_count": len(orders),
+        "risk": {
+            "total_greeks": risk.get("total_greeks", {}),
+            "exposure_pct": risk.get("exposure", {}).get("pct_of_nlv", 0),
+            "expiring_soon": risk.get("expiring_soon", []),
+            "warnings": risk.get("warnings", []),
+        },
+    }
+
+
+def sync_order_status() -> dict:
+    """
+    Reconcile IBKR order state with local DB.
+    Finds filled/cancelled orders and updates live_trades accordingly.
+    """
+    import database as db
+
+    ib = _get_ib()
+    trades = ib.trades()
+
+    updated = []
+    for trade in trades:
+        order_id = trade.order.orderId
+        status = trade.orderStatus.status
+
+        if status == "Filled":
+            # Update DB with fill price
+            success = db.update_live_trade_fill(
+                order_id=order_id,
+                fill_price=trade.orderStatus.avgFillPrice,
+                status="FILLED",
+            )
+            if success:
+                updated.append({
+                    "order_id": order_id,
+                    "action": "FILLED",
+                    "fill_price": trade.orderStatus.avgFillPrice,
+                })
+
+        elif status in ("Cancelled", "ApiCancelled", "Inactive"):
+            success = db.update_live_trade_fill(
+                order_id=order_id,
+                fill_price=0,
+                status="CANCELLED",
+            )
+            if success:
+                updated.append({"order_id": order_id, "action": "CANCELLED"})
+
+    # Also check for DB trades marked OPEN that no longer exist in IBKR
+    open_trades = db.get_live_trades(status="OPEN")
+    ibkr_con_ids = set()
+    for pos in ib.positions():
+        ibkr_con_ids.add(pos.contract.conId)
+
+    print(f"[IBKR-SYNC] Synced {len(updated)} order updates")
+    return {"synced": updated, "count": len(updated)}
+
+
+def analyze_with_strategies(symbol: str, mode: str = "swing") -> dict:
+    """
+    Complete analysis + all 6 strategies in one call (IBKR version).
+    Uses IBKR options data instead of Polygon API.
+
+    Returns same format as polygon_client.analyze_with_strategies.
+    """
+    mode_config = {
+        "scalp": {"min_dte": 0, "max_dte": 2, "strike_pct": 0.05},
+        "swing": {"min_dte": 7, "max_dte": 45, "strike_pct": 0.10},
+        "intraday": {"min_dte": 0, "max_dte": 5, "strike_pct": 0.05},
+        "leaps": {"min_dte": 180, "max_dte": 400, "strike_pct": 0.15},
+    }
+    config = mode_config.get(mode.lower(), mode_config["swing"])
+
+    # Get options chain (already in Polygon format)
+    chain = get_full_option_chain_snapshot(symbol, limit=250, min_dte=max(config["min_dte"], 1))
+    current_price = chain.get("current_price", 0)
+    results = chain.get("results", [])
+
+    if not results or current_price <= 0:
+        return {
+            "symbol": symbol.upper(),
+            "mode": mode.upper(),
+            "current_price": current_price,
+            "timestamp": datetime.now().isoformat(),
+            "error": "No options data available",
+            "strategies": {},
+        }
+
+    # Process contracts into call/put lists
+    def process_contract(c):
+        d = c.get("details", {})
+        g = c.get("greeks", {})
+        day = c.get("day", {})
+        exp = d.get("expiration_date", "")
+        try:
+            dte = (datetime.strptime(exp, "%Y-%m-%d").date() - datetime.now().date()).days
+        except (ValueError, TypeError):
+            dte = 0
+
+        price = day.get("vwap") or day.get("close", 0)
+        return {
+            "ticker": d.get("ticker"),
+            "type": d.get("contract_type"),
+            "strike": d.get("strike_price", 0),
+            "expiry": exp,
+            "dte": dte,
+            "delta": round(g.get("delta", 0), 3),
+            "gamma": round(g.get("gamma", 0), 5),
+            "theta": round(g.get("theta", 0), 3),
+            "vega": round(g.get("vega", 0), 3),
+            "iv": round(c.get("implied_volatility", 0), 3),
+            "price": round(price, 2),
+            "oi": c.get("open_interest", 0),
+            "volume": day.get("volume", 0),
+        }
+
+    all_contracts = [process_contract(c) for c in results if c.get("details", {}).get("strike_price")]
+
+    call_list = [c for c in all_contracts
+                 if c["type"] == "call" and c["dte"] >= config["min_dte"]
+                 and c["price"] >= 0.10 and c["dte"] <= config["max_dte"]]
+    put_list = [c for c in all_contracts
+                if c["type"] == "put" and c["dte"] >= config["min_dte"]
+                and c["price"] >= 0.10 and c["dte"] <= config["max_dte"]]
+
+    call_list.sort(key=lambda x: (x["expiry"], x["strike"]))
+    put_list.sort(key=lambda x: (x["expiry"], x["strike"]))
+
+    strategies = {}
+
+    # 1. LONG CALL - best ATM (delta ~0.50)
+    best_call = min(call_list, key=lambda c: abs(abs(c["delta"]) - 0.50), default=None)
+    if best_call and best_call["price"] > 0:
+        strategies["long_call"] = {
+            "direction": "BULLISH",
+            "type": "DEBIT",
+            "contract": f"CALL ${best_call['strike']} {best_call['expiry']}",
+            "cost": round(best_call["price"] * 100, 0),
+            "max_profit": "UNLIMITED",
+            "max_loss": round(best_call["price"] * 100, 0),
+            "breakeven": round(best_call["strike"] + best_call["price"], 2),
+            "delta": best_call["delta"],
+            "dte": best_call["dte"],
+            "details": best_call,
+        }
+
+    # 2. LONG PUT - best ATM (delta ~-0.50)
+    best_put = min(put_list, key=lambda p: abs(abs(p["delta"]) - 0.50), default=None)
+    if best_put and best_put["price"] > 0:
+        strategies["long_put"] = {
+            "direction": "BEARISH",
+            "type": "DEBIT",
+            "contract": f"PUT ${best_put['strike']} {best_put['expiry']}",
+            "cost": round(best_put["price"] * 100, 0),
+            "max_profit": round((best_put["strike"] - best_put["price"]) * 100, 0),
+            "max_loss": round(best_put["price"] * 100, 0),
+            "breakeven": round(best_put["strike"] - best_put["price"], 2),
+            "delta": best_put["delta"],
+            "dte": best_put["dte"],
+            "details": best_put,
+        }
+
+    # Spread helper
+    def find_spread_legs(contracts, is_call, is_bull):
+        by_expiry = {}
+        for c in contracts:
+            by_expiry.setdefault(c["expiry"], []).append(c)
+
+        best_spread = None
+        best_score = -999
+
+        for _expiry, exp_contracts in by_expiry.items():
+            exp_contracts.sort(key=lambda x: x["strike"])
+            for long_leg in exp_contracts:
+                for short_leg in exp_contracts:
+                    if is_bull:
+                        if short_leg["strike"] <= long_leg["strike"]:
+                            continue
+                        spread_width = short_leg["strike"] - long_leg["strike"]
+                    else:
+                        if short_leg["strike"] >= long_leg["strike"]:
+                            continue
+                        spread_width = long_leg["strike"] - short_leg["strike"]
+
+                    if spread_width < 1 or spread_width > 10:
+                        continue
+
+                    if is_bull == is_call:
+                        net = long_leg["price"] - short_leg["price"]
+                    else:
+                        net = short_leg["price"] - long_leg["price"]
+
+                    if net <= 0 or net < 0.30:
+                        continue
+                    if abs(long_leg["delta"]) < 0.10:
+                        continue
+
+                    rr = (spread_width - net) / net if net > 0 else 0
+                    delta_score = 100 - abs(abs(long_leg["delta"]) - 0.50) * 200
+                    atm_diff = abs(long_leg["strike"] - current_price)
+                    score = delta_score + (rr * 10) - (atm_diff / 10)
+
+                    if score > best_score:
+                        best_score = score
+                        best_spread = {
+                            "long": long_leg, "short": short_leg,
+                            "width": spread_width, "net": net, "rr": rr,
+                        }
+        return best_spread
+
+    # 3. BULL CALL SPREAD
+    bull_call = find_spread_legs(call_list, is_call=True, is_bull=True)
+    if bull_call:
+        net_debit = bull_call["net"] * 100
+        max_profit = (bull_call["width"] * 100) - net_debit
+        strategies["bull_call_spread"] = {
+            "direction": "BULLISH", "type": "DEBIT",
+            "legs": f"BUY ${bull_call['long']['strike']} / SELL ${bull_call['short']['strike']}",
+            "expiry": bull_call["long"]["expiry"],
+            "cost": round(net_debit, 0), "max_profit": round(max_profit, 0),
+            "max_loss": round(net_debit, 0),
+            "breakeven": round(bull_call["long"]["strike"] + bull_call["net"], 2),
+            "risk_reward": round(max_profit / net_debit, 2) if net_debit > 0 else 0,
+            "dte": bull_call["long"]["dte"],
+            "details": {"long": bull_call["long"], "short": bull_call["short"]},
+        }
+
+    # 4. BEAR PUT SPREAD
+    bear_put = find_spread_legs(put_list, is_call=False, is_bull=False)
+    if bear_put:
+        net_debit = bear_put["net"] * 100
+        max_profit = (bear_put["width"] * 100) - net_debit
+        strategies["bear_put_spread"] = {
+            "direction": "BEARISH", "type": "DEBIT",
+            "legs": f"BUY ${bear_put['long']['strike']} / SELL ${bear_put['short']['strike']}",
+            "expiry": bear_put["long"]["expiry"],
+            "cost": round(net_debit, 0), "max_profit": round(max_profit, 0),
+            "max_loss": round(net_debit, 0),
+            "breakeven": round(bear_put["long"]["strike"] - bear_put["net"], 2),
+            "risk_reward": round(max_profit / net_debit, 2) if net_debit > 0 else 0,
+            "dte": bear_put["long"]["dte"],
+            "details": {"long": bear_put["long"], "short": bear_put["short"]},
+        }
+
+    # 5. BULL PUT SPREAD (Credit)
+    bull_put_best = None
+    bp_best_score = -999
+    bp_by_expiry = {}
+    for p in put_list:
+        bp_by_expiry.setdefault(p["expiry"], []).append(p)
+
+    for _exp, exp_puts in bp_by_expiry.items():
+        exp_puts.sort(key=lambda x: x["strike"])
+        for short_leg in exp_puts:
+            if short_leg["strike"] >= current_price or abs(short_leg["delta"]) > 0.45:
+                continue
+            for long_leg in exp_puts:
+                if long_leg["strike"] >= short_leg["strike"]:
+                    continue
+                width = short_leg["strike"] - long_leg["strike"]
+                if width < 3 or width > 10:
+                    continue
+                credit = short_leg["price"] - long_leg["price"]
+                if credit < 0.20:
+                    continue
+                max_loss = (width - credit) * 100
+                if max_loss <= 0:
+                    continue
+                delta_score = 100 - abs(abs(short_leg["delta"]) - 0.30) * 200
+                score = delta_score + (credit * 50)
+                if score > bp_best_score:
+                    bp_best_score = score
+                    bull_put_best = {
+                        "short": short_leg, "long": long_leg,
+                        "width": width, "credit": credit,
+                        "rr": (credit * 100) / max_loss,
+                    }
+
+    if bull_put_best:
+        net_credit = bull_put_best["credit"] * 100
+        max_loss = (bull_put_best["width"] * 100) - net_credit
+        strategies["bull_put_spread"] = {
+            "direction": "BULLISH", "type": "CREDIT",
+            "legs": f"SELL ${bull_put_best['short']['strike']} / BUY ${bull_put_best['long']['strike']}",
+            "expiry": bull_put_best["short"]["expiry"],
+            "credit": round(net_credit, 0), "max_profit": round(net_credit, 0),
+            "max_loss": round(max_loss, 0),
+            "breakeven": round(bull_put_best["short"]["strike"] - bull_put_best["credit"], 2),
+            "risk_reward": round(net_credit / max_loss, 2) if max_loss > 0 else 0,
+            "dte": bull_put_best["short"]["dte"],
+            "details": {"short": bull_put_best["short"], "long": bull_put_best["long"]},
+        }
+
+    # 6. BEAR CALL SPREAD (Credit)
+    bear_call_best = None
+    bc_best_score = -999
+    bc_by_expiry = {}
+    for c in call_list:
+        bc_by_expiry.setdefault(c["expiry"], []).append(c)
+
+    for _exp, exp_calls in bc_by_expiry.items():
+        exp_calls.sort(key=lambda x: x["strike"])
+        for short_leg in exp_calls:
+            if short_leg["strike"] <= current_price or abs(short_leg["delta"]) > 0.45:
+                continue
+            for long_leg in exp_calls:
+                if long_leg["strike"] <= short_leg["strike"]:
+                    continue
+                width = long_leg["strike"] - short_leg["strike"]
+                if width < 3 or width > 10:
+                    continue
+                credit = short_leg["price"] - long_leg["price"]
+                if credit < 0.20:
+                    continue
+                max_loss = (width - credit) * 100
+                if max_loss <= 0:
+                    continue
+                delta_score = 100 - abs(abs(short_leg["delta"]) - 0.30) * 200
+                score = delta_score + (credit * 50)
+                if score > bc_best_score:
+                    bc_best_score = score
+                    bear_call_best = {
+                        "short": short_leg, "long": long_leg,
+                        "width": width, "credit": credit,
+                        "rr": (credit * 100) / max_loss,
+                    }
+
+    if bear_call_best:
+        net_credit = bear_call_best["credit"] * 100
+        max_loss = (bear_call_best["width"] * 100) - net_credit
+        strategies["bear_call_spread"] = {
+            "direction": "BEARISH", "type": "CREDIT",
+            "legs": f"SELL ${bear_call_best['short']['strike']} / BUY ${bear_call_best['long']['strike']}",
+            "expiry": bear_call_best["short"]["expiry"],
+            "credit": round(net_credit, 0), "max_profit": round(net_credit, 0),
+            "max_loss": round(max_loss, 0),
+            "breakeven": round(bear_call_best["short"]["strike"] + bear_call_best["credit"], 2),
+            "risk_reward": round(net_credit / max_loss, 2) if max_loss > 0 else 0,
+            "dte": bear_call_best["short"]["dte"],
+            "details": {"short": bear_call_best["short"], "long": bear_call_best["long"]},
+        }
+
+    print(f"[IBKR-STRATEGIES] {symbol} | Mode={mode} | {len(strategies)} strategies found")
+
+    return {
+        "symbol": symbol.upper(),
+        "mode": mode.upper(),
+        "current_price": current_price,
+        "timestamp": datetime.now().isoformat(),
+        "dte_range": [config["min_dte"], config["max_dte"]],
+        "contracts_fetched": {"calls": len(call_list), "puts": len(put_list)},
+        "strategies": strategies,
+    }
+
+
+def execute_strategy(
+    strategy_result: dict,
+    strategy_name: str,
+    quantity: int = 1,
+    order_type: str = "LMT",
+) -> dict:
+    """
+    Execute a specific strategy from /strategies output.
+    Handles both single-leg (long_call, long_put) and spreads.
+
+    Args:
+        strategy_result: Full dict from /strategies endpoint
+        strategy_name: e.g. "long_call", "bull_call_spread", "bear_put_spread"
+        quantity: Number of contracts/spreads
+        order_type: "LMT" or "MKT"
+
+    Returns:
+        Order result dict.
+    """
+    strategies = strategy_result.get("strategies", {})
+    symbol = strategy_result.get("symbol", "")
+
+    if strategy_name not in strategies:
+        return {"error": f"Strategy '{strategy_name}' not found", "available": list(strategies.keys())}
+
+    strat = strategies[strategy_name]
+
+    # Single-leg strategies
+    if strategy_name == "long_call":
+        details = strat["details"]
+        return place_option_order(
+            symbol=symbol, expiry=details["expiry"], strike=details["strike"],
+            right="C", action="BUY", quantity=quantity, order_type=order_type,
+            limit_price=details["price"] if order_type == "LMT" else None,
+        )
+
+    elif strategy_name == "long_put":
+        details = strat["details"]
+        return place_option_order(
+            symbol=symbol, expiry=details["expiry"], strike=details["strike"],
+            right="P", action="BUY", quantity=quantity, order_type=order_type,
+            limit_price=details["price"] if order_type == "LMT" else None,
+        )
+
+    # Spread strategies
+    elif strategy_name in ("bull_call_spread", "bear_put_spread"):
+        # Debit spreads: BUY long leg, SELL short leg
+        long_leg = strat["details"]["long"]
+        short_leg = strat["details"]["short"]
+        right = "C" if "call" in strategy_name else "P"
+        legs = [
+            {"expiry": long_leg["expiry"], "strike": long_leg["strike"],
+             "right": right, "action": "BUY", "ratio": 1},
+            {"expiry": short_leg["expiry"], "strike": short_leg["strike"],
+             "right": right, "action": "SELL", "ratio": 1},
+        ]
+        net_price = round(strat.get("cost", 0) / 100, 2)
+        return place_spread_order(
+            symbol=symbol, legs=legs, action="BUY", quantity=quantity,
+            order_type=order_type,
+            limit_price=net_price if order_type == "LMT" else None,
+        )
+
+    elif strategy_name in ("bull_put_spread", "bear_call_spread"):
+        # Credit spreads: SELL short leg, BUY long leg
+        short_leg = strat["details"]["short"]
+        long_leg = strat["details"]["long"]
+        right = "P" if "put" in strategy_name else "C"
+        legs = [
+            {"expiry": short_leg["expiry"], "strike": short_leg["strike"],
+             "right": right, "action": "SELL", "ratio": 1},
+            {"expiry": long_leg["expiry"], "strike": long_leg["strike"],
+             "right": right, "action": "BUY", "ratio": 1},
+        ]
+        net_price = round(strat.get("credit", 0) / 100, 2)
+        return place_spread_order(
+            symbol=symbol, legs=legs, action="SELL", quantity=quantity,
+            order_type=order_type,
+            limit_price=net_price if order_type == "LMT" else None,
+        )
+
+    return {"error": f"Unknown strategy type: {strategy_name}"}
