@@ -2080,6 +2080,280 @@ def analyze_with_strategies(symbol: str, mode: str = "swing") -> dict:
             "details": {"short": bear_call_best["short"], "long": bear_call_best["long"]},
         }
 
+    # 7. IRON CONDOR — bull put spread + bear call spread
+    if bull_put_best and bear_call_best:
+        ic_credit = (bull_put_best["credit"] + bear_call_best["credit"]) * 100
+        ic_put_width = bull_put_best["width"]
+        ic_call_width = bear_call_best["width"]
+        ic_max_loss = (max(ic_put_width, ic_call_width) * 100) - ic_credit
+        strategies["iron_condor"] = {
+            "direction": "NEUTRAL",
+            "type": "CREDIT",
+            "legs": (
+                f"SELL ${bull_put_best['short']['strike']}P / BUY ${bull_put_best['long']['strike']}P / "
+                f"SELL ${bear_call_best['short']['strike']}C / BUY ${bear_call_best['long']['strike']}C"
+            ),
+            "expiry": bull_put_best["short"]["expiry"],
+            "credit": round(ic_credit, 0),
+            "max_profit": round(ic_credit, 0),
+            "max_loss": round(ic_max_loss, 0),
+            "breakeven_lower": round(bull_put_best["short"]["strike"] - (ic_credit / 100), 2),
+            "breakeven_upper": round(bear_call_best["short"]["strike"] + (ic_credit / 100), 2),
+            "risk_reward": round(ic_credit / ic_max_loss, 2) if ic_max_loss > 0 else 0,
+            "dte": bull_put_best["short"]["dte"],
+            "details": {
+                "put_short": bull_put_best["short"],
+                "put_long": bull_put_best["long"],
+                "call_short": bear_call_best["short"],
+                "call_long": bear_call_best["long"],
+            },
+        }
+
+    # 8. LONG STRADDLE — buy ATM call + ATM put, same strike/expiry
+    if best_call and best_put:
+        # Find matching expiry + closest shared strike
+        straddle_strike = best_call["strike"]
+        straddle_put = min(
+            [p for p in put_list if p["expiry"] == best_call["expiry"]],
+            key=lambda p: abs(p["strike"] - straddle_strike),
+            default=None,
+        )
+        if straddle_put and abs(straddle_put["strike"] - straddle_strike) <= current_price * 0.02:
+            total_cost = (best_call["price"] + straddle_put["price"]) * 100
+            strategies["long_straddle"] = {
+                "direction": "NEUTRAL_VOLATILE",
+                "type": "DEBIT",
+                "legs": f"BUY ${straddle_strike}C + BUY ${straddle_put['strike']}P",
+                "expiry": best_call["expiry"],
+                "cost": round(total_cost, 0),
+                "max_profit": "UNLIMITED",
+                "max_loss": round(total_cost, 0),
+                "breakeven_upper": round(straddle_strike + (total_cost / 100), 2),
+                "breakeven_lower": round(straddle_put["strike"] - (total_cost / 100), 2),
+                "dte": best_call["dte"],
+                "details": {"call": best_call, "put": straddle_put},
+            }
+
+    # 9. LONG STRANGLE — buy OTM call + OTM put
+    otm_call = min(
+        [c for c in call_list if c["strike"] > current_price and 0.15 <= abs(c["delta"]) <= 0.35],
+        key=lambda c: abs(abs(c["delta"]) - 0.25),
+        default=None,
+    )
+    otm_put = min(
+        [p for p in put_list if p["strike"] < current_price and 0.15 <= abs(p["delta"]) <= 0.35],
+        key=lambda p: abs(abs(p["delta"]) - 0.25),
+        default=None,
+    )
+    if otm_call and otm_put:
+        # Try to match expiry
+        if otm_call["expiry"] != otm_put["expiry"]:
+            alt_put = min(
+                [p for p in put_list if p["expiry"] == otm_call["expiry"] and p["strike"] < current_price and abs(p["delta"]) >= 0.10],
+                key=lambda p: abs(abs(p["delta"]) - 0.25),
+                default=otm_put,
+            )
+            otm_put = alt_put
+
+        strangle_cost = (otm_call["price"] + otm_put["price"]) * 100
+        if strangle_cost > 0:
+            strategies["long_strangle"] = {
+                "direction": "NEUTRAL_VOLATILE",
+                "type": "DEBIT",
+                "legs": f"BUY ${otm_call['strike']}C + BUY ${otm_put['strike']}P",
+                "expiry": otm_call["expiry"],
+                "cost": round(strangle_cost, 0),
+                "max_profit": "UNLIMITED",
+                "max_loss": round(strangle_cost, 0),
+                "breakeven_upper": round(otm_call["strike"] + (strangle_cost / 100), 2),
+                "breakeven_lower": round(otm_put["strike"] - (strangle_cost / 100), 2),
+                "dte": otm_call["dte"],
+                "details": {"call": otm_call, "put": otm_put},
+            }
+
+    # 10. BUTTERFLY — buy 1 lower + sell 2 middle + buy 1 upper (same type)
+    # Low cost, capped profit, best near expiry when expecting pin
+    if len(call_list) >= 3:
+        by_expiry_bf = {}
+        for c in call_list:
+            by_expiry_bf.setdefault(c["expiry"], []).append(c)
+
+        best_bf = None
+        best_bf_score = -999
+        for _exp, exp_calls in by_expiry_bf.items():
+            exp_calls.sort(key=lambda x: x["strike"])
+            for i, lower in enumerate(exp_calls):
+                for j, middle in enumerate(exp_calls):
+                    if middle["strike"] <= lower["strike"]:
+                        continue
+                    width = middle["strike"] - lower["strike"]
+                    upper_strike = middle["strike"] + width
+                    upper = next((c for c in exp_calls if c["strike"] == upper_strike), None)
+                    if not upper:
+                        continue
+                    # Cost = lower + upper - 2*middle
+                    net = lower["price"] + upper["price"] - 2 * middle["price"]
+                    if net <= 0 or net < 0.20:
+                        continue
+                    max_profit = (width - net) * 100
+                    if max_profit <= 0:
+                        continue
+                    rr = max_profit / (net * 100) if net > 0 else 0
+                    atm_diff = abs(middle["strike"] - current_price)
+                    score = rr * 10 - atm_diff / 5
+                    if score > best_bf_score:
+                        best_bf_score = score
+                        best_bf = {
+                            "lower": lower, "middle": middle, "upper": upper,
+                            "width": width, "net": net, "max_profit": max_profit,
+                        }
+
+        if best_bf:
+            bf_cost = best_bf["net"] * 100
+            strategies["call_butterfly"] = {
+                "direction": "NEUTRAL_PIN",
+                "type": "DEBIT",
+                "legs": (
+                    f"BUY ${best_bf['lower']['strike']}C / "
+                    f"SELL 2x ${best_bf['middle']['strike']}C / "
+                    f"BUY ${best_bf['upper']['strike']}C"
+                ),
+                "expiry": best_bf["middle"]["expiry"],
+                "cost": round(bf_cost, 0),
+                "max_profit": round(best_bf["max_profit"], 0),
+                "max_loss": round(bf_cost, 0),
+                "sweet_spot": best_bf["middle"]["strike"],
+                "risk_reward": round(best_bf["max_profit"] / bf_cost, 2) if bf_cost > 0 else 0,
+                "dte": best_bf["middle"]["dte"],
+                "details": {
+                    "lower": best_bf["lower"],
+                    "middle": best_bf["middle"],
+                    "upper": best_bf["upper"],
+                    "width": best_bf["width"],
+                },
+            }
+
+    # 11. CALENDAR SPREAD — sell near-term + buy far-term, same strike
+    # Only if we have multiple expirations
+    all_expiries = sorted(set(c["expiry"] for c in call_list))
+    if len(all_expiries) >= 2 and best_call:
+        near_exp = all_expiries[0]
+        far_exp = all_expiries[-1] if len(all_expiries) > 2 else all_expiries[1]
+        target_strike = best_call["strike"]
+
+        near_call = min(
+            [c for c in call_list if c["expiry"] == near_exp],
+            key=lambda c: abs(c["strike"] - target_strike),
+            default=None,
+        )
+        far_call = min(
+            [c for c in call_list if c["expiry"] == far_exp],
+            key=lambda c: abs(c["strike"] - target_strike),
+            default=None,
+        )
+
+        if near_call and far_call and near_call["strike"] == far_call["strike"]:
+            cal_net = far_call["price"] - near_call["price"]
+            if cal_net > 0:
+                strategies["calendar_spread"] = {
+                    "direction": "NEUTRAL",
+                    "type": "DEBIT",
+                    "legs": f"SELL ${near_call['strike']}C {near_exp} / BUY ${far_call['strike']}C {far_exp}",
+                    "near_expiry": near_exp,
+                    "far_expiry": far_exp,
+                    "strike": near_call["strike"],
+                    "cost": round(cal_net * 100, 0),
+                    "max_loss": round(cal_net * 100, 0),
+                    "max_profit": "VARIABLE (max at near expiry if stock at strike)",
+                    "dte_near": near_call["dte"],
+                    "dte_far": far_call["dte"],
+                    "details": {"near": near_call, "far": far_call},
+                }
+
+    # 12. DIAGONAL SPREAD — sell near-term OTM + buy far-term ATM
+    if len(all_expiries) >= 2:
+        near_exp = all_expiries[0]
+        far_exp = all_expiries[-1] if len(all_expiries) > 2 else all_expiries[1]
+
+        # Far leg: ATM call
+        far_atm = min(
+            [c for c in call_list if c["expiry"] == far_exp],
+            key=lambda c: abs(abs(c["delta"]) - 0.50),
+            default=None,
+        )
+        # Near leg: OTM call (delta ~0.30)
+        near_otm = min(
+            [c for c in call_list if c["expiry"] == near_exp and c["strike"] > current_price],
+            key=lambda c: abs(abs(c["delta"]) - 0.30),
+            default=None,
+        )
+
+        if far_atm and near_otm and far_atm["price"] > near_otm["price"]:
+            diag_net = far_atm["price"] - near_otm["price"]
+            strategies["diagonal_spread"] = {
+                "direction": "BULLISH",
+                "type": "DEBIT",
+                "legs": f"SELL ${near_otm['strike']}C {near_exp} / BUY ${far_atm['strike']}C {far_exp}",
+                "near_expiry": near_exp,
+                "far_expiry": far_exp,
+                "cost": round(diag_net * 100, 0),
+                "max_loss": round(diag_net * 100, 0),
+                "max_profit": "VARIABLE",
+                "dte_near": near_otm["dte"],
+                "dte_far": far_atm["dte"],
+                "details": {"near": near_otm, "far": far_atm},
+            }
+
+    # 13. COVERED CALL — buy 100 shares + sell OTM call
+    otm_cc_call = min(
+        [c for c in call_list if c["strike"] > current_price and 0.20 <= abs(c["delta"]) <= 0.40],
+        key=lambda c: abs(abs(c["delta"]) - 0.30),
+        default=None,
+    )
+    if otm_cc_call:
+        stock_cost = current_price * 100
+        premium = otm_cc_call["price"] * 100
+        max_profit = ((otm_cc_call["strike"] - current_price) * 100) + premium
+        strategies["covered_call"] = {
+            "direction": "BULLISH_INCOME",
+            "type": "STOCK+OPTION",
+            "legs": f"BUY 100 {symbol.upper()} + SELL ${otm_cc_call['strike']}C",
+            "expiry": otm_cc_call["expiry"],
+            "cost": round(stock_cost - premium, 0),
+            "premium_collected": round(premium, 0),
+            "max_profit": round(max_profit, 0),
+            "max_loss": round(stock_cost - premium, 0),
+            "breakeven": round(current_price - otm_cc_call["price"], 2),
+            "yield_pct": round((premium / stock_cost) * 100, 1),
+            "dte": otm_cc_call["dte"],
+            "details": {"short_call": otm_cc_call, "stock_price": current_price},
+        }
+
+    # 14. PROTECTIVE PUT — buy 100 shares + buy OTM put
+    otm_pp_put = min(
+        [p for p in put_list if p["strike"] < current_price and 0.20 <= abs(p["delta"]) <= 0.40],
+        key=lambda p: abs(abs(p["delta"]) - 0.30),
+        default=None,
+    )
+    if otm_pp_put:
+        stock_cost = current_price * 100
+        put_cost = otm_pp_put["price"] * 100
+        max_loss = ((current_price - otm_pp_put["strike"]) + otm_pp_put["price"]) * 100
+        strategies["protective_put"] = {
+            "direction": "BULLISH_HEDGED",
+            "type": "STOCK+OPTION",
+            "legs": f"BUY 100 {symbol.upper()} + BUY ${otm_pp_put['strike']}P",
+            "expiry": otm_pp_put["expiry"],
+            "cost": round(stock_cost + put_cost, 0),
+            "max_profit": "UNLIMITED (stock upside)",
+            "max_loss": round(max_loss, 0),
+            "breakeven": round(current_price + otm_pp_put["price"], 2),
+            "protection_level": otm_pp_put["strike"],
+            "insurance_cost_pct": round((put_cost / stock_cost) * 100, 1),
+            "dte": otm_pp_put["dte"],
+            "details": {"long_put": otm_pp_put, "stock_price": current_price},
+        }
+
     print(f"[IBKR-STRATEGIES] {symbol} | Mode={mode} | {len(strategies)} strategies found")
 
     return {
@@ -2173,5 +2447,173 @@ def execute_strategy(
             order_type=order_type,
             limit_price=net_price if order_type == "LMT" else None,
         )
+
+    # Iron Condor — 4 legs (bull put + bear call)
+    elif strategy_name == "iron_condor":
+        d = strat["details"]
+        legs = [
+            {"expiry": d["put_short"]["expiry"], "strike": d["put_short"]["strike"],
+             "right": "P", "action": "SELL", "ratio": 1},
+            {"expiry": d["put_long"]["expiry"], "strike": d["put_long"]["strike"],
+             "right": "P", "action": "BUY", "ratio": 1},
+            {"expiry": d["call_short"]["expiry"], "strike": d["call_short"]["strike"],
+             "right": "C", "action": "SELL", "ratio": 1},
+            {"expiry": d["call_long"]["expiry"], "strike": d["call_long"]["strike"],
+             "right": "C", "action": "BUY", "ratio": 1},
+        ]
+        net_price = round(strat.get("credit", 0) / 100, 2)
+        return place_spread_order(
+            symbol=symbol, legs=legs, action="SELL", quantity=quantity,
+            order_type=order_type,
+            limit_price=net_price if order_type == "LMT" else None,
+        )
+
+    # Straddle — buy call + put at same strike
+    elif strategy_name == "long_straddle":
+        d = strat["details"]
+        call_leg = d["call"]
+        put_leg = d["put"]
+        legs = [
+            {"expiry": call_leg["expiry"], "strike": call_leg["strike"],
+             "right": "C", "action": "BUY", "ratio": 1},
+            {"expiry": put_leg["expiry"], "strike": put_leg["strike"],
+             "right": "P", "action": "BUY", "ratio": 1},
+        ]
+        net_price = round(strat.get("cost", 0) / 100, 2)
+        return place_spread_order(
+            symbol=symbol, legs=legs, action="BUY", quantity=quantity,
+            order_type=order_type,
+            limit_price=net_price if order_type == "LMT" else None,
+        )
+
+    # Strangle — buy OTM call + OTM put
+    elif strategy_name == "long_strangle":
+        d = strat["details"]
+        legs = [
+            {"expiry": d["call"]["expiry"], "strike": d["call"]["strike"],
+             "right": "C", "action": "BUY", "ratio": 1},
+            {"expiry": d["put"]["expiry"], "strike": d["put"]["strike"],
+             "right": "P", "action": "BUY", "ratio": 1},
+        ]
+        net_price = round(strat.get("cost", 0) / 100, 2)
+        return place_spread_order(
+            symbol=symbol, legs=legs, action="BUY", quantity=quantity,
+            order_type=order_type,
+            limit_price=net_price if order_type == "LMT" else None,
+        )
+
+    # Butterfly — buy 1 lower, sell 2 middle, buy 1 upper
+    elif strategy_name == "call_butterfly":
+        d = strat["details"]
+        legs = [
+            {"expiry": d["lower"]["expiry"], "strike": d["lower"]["strike"],
+             "right": "C", "action": "BUY", "ratio": 1},
+            {"expiry": d["middle"]["expiry"], "strike": d["middle"]["strike"],
+             "right": "C", "action": "SELL", "ratio": 2},
+            {"expiry": d["upper"]["expiry"], "strike": d["upper"]["strike"],
+             "right": "C", "action": "BUY", "ratio": 1},
+        ]
+        net_price = round(strat.get("cost", 0) / 100, 2)
+        return place_spread_order(
+            symbol=symbol, legs=legs, action="BUY", quantity=quantity,
+            order_type=order_type,
+            limit_price=net_price if order_type == "LMT" else None,
+        )
+
+    # Calendar Spread — sell near, buy far (same strike)
+    elif strategy_name == "calendar_spread":
+        d = strat["details"]
+        legs = [
+            {"expiry": d["near"]["expiry"], "strike": d["near"]["strike"],
+             "right": "C", "action": "SELL", "ratio": 1},
+            {"expiry": d["far"]["expiry"], "strike": d["far"]["strike"],
+             "right": "C", "action": "BUY", "ratio": 1},
+        ]
+        net_price = round(strat.get("cost", 0) / 100, 2)
+        return place_spread_order(
+            symbol=symbol, legs=legs, action="BUY", quantity=quantity,
+            order_type=order_type,
+            limit_price=net_price if order_type == "LMT" else None,
+        )
+
+    # Diagonal Spread — sell near OTM, buy far ATM
+    elif strategy_name == "diagonal_spread":
+        d = strat["details"]
+        legs = [
+            {"expiry": d["near"]["expiry"], "strike": d["near"]["strike"],
+             "right": "C", "action": "SELL", "ratio": 1},
+            {"expiry": d["far"]["expiry"], "strike": d["far"]["strike"],
+             "right": "C", "action": "BUY", "ratio": 1},
+        ]
+        net_price = round(strat.get("cost", 0) / 100, 2)
+        return place_spread_order(
+            symbol=symbol, legs=legs, action="BUY", quantity=quantity,
+            order_type=order_type,
+            limit_price=net_price if order_type == "LMT" else None,
+        )
+
+    # Covered Call — buy 100 shares + sell call
+    elif strategy_name == "covered_call":
+        d = strat["details"]
+        ib = _get_ib()
+        stock = Stock(symbol, "SMART", "USD")
+        ib.qualifyContracts(stock)
+
+        from ib_insync import MarketOrder, LimitOrder
+        # Buy 100 shares
+        stock_order = MarketOrder("BUY", 100)
+        stock_trade = ib.placeOrder(stock, stock_order)
+        ib.sleep(2)
+
+        # Sell OTM call
+        call_result = place_option_order(
+            symbol=symbol, expiry=d["short_call"]["expiry"],
+            strike=d["short_call"]["strike"], right="C", action="SELL",
+            quantity=quantity, order_type=order_type,
+            limit_price=d["short_call"]["price"] if order_type == "LMT" else None,
+        )
+
+        return {
+            "stock_order": {
+                "order_id": stock_trade.order.orderId,
+                "status": stock_trade.orderStatus.status,
+                "action": "BUY",
+                "quantity": 100,
+            },
+            "option_order": call_result,
+            "strategy": "covered_call",
+        }
+
+    # Protective Put — buy 100 shares + buy put
+    elif strategy_name == "protective_put":
+        d = strat["details"]
+        ib = _get_ib()
+        stock = Stock(symbol, "SMART", "USD")
+        ib.qualifyContracts(stock)
+
+        from ib_insync import MarketOrder
+        # Buy 100 shares
+        stock_order = MarketOrder("BUY", 100)
+        stock_trade = ib.placeOrder(stock, stock_order)
+        ib.sleep(2)
+
+        # Buy protective put
+        put_result = place_option_order(
+            symbol=symbol, expiry=d["long_put"]["expiry"],
+            strike=d["long_put"]["strike"], right="P", action="BUY",
+            quantity=quantity, order_type=order_type,
+            limit_price=d["long_put"]["price"] if order_type == "LMT" else None,
+        )
+
+        return {
+            "stock_order": {
+                "order_id": stock_trade.order.orderId,
+                "status": stock_trade.orderStatus.status,
+                "action": "BUY",
+                "quantity": 100,
+            },
+            "option_order": put_result,
+            "strategy": "protective_put",
+        }
 
     return {"error": f"Unknown strategy type: {strategy_name}"}
