@@ -1,155 +1,167 @@
-# 🚀 TradePilot MCP Server v3.0
-**Advanced 18-Layer Trading Intelligence Engine**
+# TradePilot MCP Server v3.0
 
-A production-grade MCP (Model Context Protocol) server that combines **Polygon.io real-time market data** with an **18-layer technical analysis engine** for autonomous options trading intelligence.
+Advanced 18-Layer Trading Intelligence Engine for AI-powered options trading.
 
----
-
-## 📊 What is This?
-
-TradePilot is a **FastAPI-based MCP server** that:
-- Fetches real-time and historical market data from Polygon.io
-- Runs analysis through **18 specialized layers** (Technical + Price Action + Options + Master Brain)
-- Provides **14 high-probability playbooks** targeting 85-95% win rates
-- Delivers actionable options trading signals with precise strike/expiry recommendations
-- Includes multi-ticker scanning, risk management, and alert notifications
-
-Think of it as your **AI options trading copilot** powered by institutional-grade analysis.
+TradePilot is a FastAPI-based MCP server that fetches real-time market data from Polygon.io, runs it through 18 specialized analysis layers, and outputs structured raw data for AI (Claude/GPT) to make trading decisions across all timeframes.
 
 ---
 
-## 🎯 Key Features
+## How It Works
 
-- **18-Layer Analysis System**
-  - Layers 1-10: Technical indicators (Momentum, Volume, Trend, Structure)
-  - Layers 11-13: Price action (Support/Resistance, VWAP, Volume Profile)
-  - Layers 14-17: Options analysis (IV, Greeks, Gamma, Put/Call ratios)
-  - Layer 18: Master Brain with 14 playbooks
+```
+Polygon.io Market Data
+        |
+        v
+18-Layer Analysis Engine
+  Layers 1-10:  Technical (Momentum, Volume, Divergence, Trend, Structure, Liquidity, Volatility, MTF, Candles)
+  Layers 11-13: Price Action (Support/Resistance, VWAP, Volume Profile)
+  Layers 14-17: Options (IV, Gamma/Max Pain, Put/Call Ratio, Greeks)
+  Layer 18:     Brain Aggregator (organizes all data for AI)
+        |
+        v
+Structured Raw Data Output (JSON)
+        |
+        v
+AI reads ALL the data and makes the trading decision
+```
 
-- **Trading Modes**
-  - SCALP: 0-2 DTE options
-  - SWING: 7-45 DTE options
-  - INTRADAY: Same-day trades
-
-- **Advanced Features**
-  - Multi-ticker scanner with filtering
-  - Kelly Criterion position sizing
-  - Risk management with drawdown protection
-  - Discord/Slack/Telegram alerts
-  - Backtesting engine
-  - AI-ready JSON output
+The server outputs pure data. No scores, no confidence percentages. The AI reads every data point from every layer and tells you what the data says.
 
 ---
 
-## 🚀 Quick Start
+## Trading Modes
+
+| Mode | Timeframe | DTE | Use Case |
+|------|-----------|-----|----------|
+| SCALP | 5-minute bars | 0-2 days | Quick in-and-out trades |
+| INTRADAY | 15-minute bars | 0-5 days | Same-day directional |
+| SWING | Daily bars | 7-45 days | Multi-day trend trades |
+| LEAPS | Daily bars | 180-720 days | Long-term positions |
+
+Each mode automatically fetches the right timeframe data and focuses on the layers most relevant to that style.
+
+---
+
+## Setup
+
 ```bash
-# Clone the repository
-git clone https://github.com/Sakhir786/tradepilot-mcp-server.git
-cd tradepilot-mcp-server
+# Clone
+git clone https://github.com/Sakhir786/tradepilot-mcp-serveradvance2.0.git
+cd tradepilot-mcp-serveradvance2.0
 
-# Set up environment
+# Install
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Configure environment variables
+# Configure
 cp .env.example .env
 # Edit .env and add your POLYGON_API_KEY
 
-# Run the server
-python main.py
-# Or with uvicorn:
+# Run
 uvicorn main:app --host 0.0.0.0 --port 10000
 ```
 
-Access documentation at: http://localhost:10000/docs
+Docs at: `http://localhost:10000/docs`
 
 ---
 
-## 📡 API Endpoints
+## API Endpoints
 
-### 18-Layer Analysis
-- `GET /engine18/analyze` - Full 18-layer analysis
-- `GET /engine18/quick` - Quick signal check
-- `GET /engine18/scan` - Multi-ticker scanner
-- `GET /engine18/playbooks` - List all 14 playbooks
-- `GET /engine18/health` - System health check
+### Analysis Engine (`/engine18/`)
+
+| Endpoint | What It Does |
+|----------|-------------|
+| `GET /engine18/analyze?symbol=SPY&mode=scalp` | Full 18-layer analysis |
+| `GET /engine18/quick?symbol=SPY&mode=swing` | Fast signal check |
+| `GET /engine18/scan?symbols=SPY,QQQ,AAPL&mode=scalp` | Multi-ticker scan |
+| `GET /engine18/compare?symbols=SPY,QQQ&mode=swing` | Side-by-side comparison |
+| `GET /engine18/layer/{number}?symbol=SPY` | Single layer analysis |
+| `GET /engine18/layers` | List all 18 layers |
+| `GET /engine18/playbooks` | List playbooks |
+| `GET /engine18/health` | System health |
 
 ### Market Data (Polygon.io)
-- `GET /candles` - OHLCV data
-- `GET /options` - Options chain
-- `GET /news` - Latest news
-- `GET /ticker-details` - Company info
+
+| Endpoint | What It Does |
+|----------|-------------|
+| `GET /candles?symbol=SPY&tf=day&limit=200` | OHLCV price data |
+| `GET /options?symbol=SPY` | Options chain |
+| `GET /news?symbol=SPY` | Latest news |
+| `GET /ticker-details?symbol=SPY` | Company info |
+| `GET /fundamentals?symbol=SPY` | Financial data |
+| `GET /stock-snapshot?symbol=SPY` | Real-time snapshot |
+| `GET /option-chain-snapshot?symbol=SPY` | Full options chain |
 
 ---
 
-## 🔧 Environment Variables
-```bash
-POLYGON_API_KEY=your_api_key_here
-TRADEPILOT_PRODUCTION_PATH=/path/to/tradepilot-mcp-server
-TRADEPILOT_LAYERS_PATH=/path/to/layers
-TRADEPILOT_PORTFOLIO_VALUE=100000
-TRADEPILOT_DISCORD_WEBHOOK=your_webhook_url
+## The 18 Layers
+
+### Technical Layers (1-10)
+| Layer | Name | What It Analyzes |
+|-------|------|-----------------|
+| 1 | Momentum | RSI, MACD, Stochastic, CMF, ADX, Ichimoku |
+| 2 | Volume | OBV, A/D Line, volume trend |
+| 3 | Divergence | MACD + RSI divergences (regular + hidden) |
+| 4 | Volume Strength | CVD, buying/selling pressure, EOM |
+| 5 | Trend | SuperTrend, ATR, market regime, whipsaw detection |
+| 6 | Structure | BOS, CHoCH, order blocks, fair value gaps (ICT) |
+| 7 | Liquidity | Liquidity sweeps, ICT buy/sell side, grabs |
+| 8 | Volatility Regime | ATR percentiles, regime classification |
+| 9 | MTF Confirmation | Multi-timeframe SuperTrend alignment |
+| 10 | Candle Intelligence | 15+ patterns, three white soldiers, inside bars |
+
+### Price Action Layers (11-13)
+| Layer | Name | What It Analyzes |
+|-------|------|-----------------|
+| 11 | Support/Resistance | Fractals, pivot points, MTF levels, confluence zones |
+| 12 | VWAP | VWAP + bands, slope, crossovers, rejections |
+| 13 | Volume Profile | POC, value area, buying/selling pressure at levels |
+
+### Options Layers (14-17)
+| Layer | Name | What It Analyzes |
+|-------|------|-----------------|
+| 14 | IV Analysis | IV rank, IV percentile, expected move, HV |
+| 15 | Gamma/Max Pain | Max pain, gamma exposure, pin probability |
+| 16 | Put/Call Ratio | PCR sentiment, z-score, band position |
+| 17 | Greeks | Delta, gamma, theta, vega, best strike selection |
+
+### Aggregation (18)
+| Layer | Name | What It Does |
+|-------|------|-------------|
+| 18 | Brain | Aggregates all 17 layers into organized structure for AI consumption |
+
+---
+
+## Integration with TradingView MCP
+
+TradePilot is designed to work alongside [TradingView MCP](https://github.com/LewisWJackson/tradingview-mcp-jackson) for a complete trading system:
+
+- **TradePilot MCP** = The analytical brain (18-layer data analysis from Polygon.io)
+- **TradingView MCP** = The live eyes and hands (real-time chart control, indicator reading, replay backtesting)
+- **Claude** = The trader (reads data from both, makes trading decisions)
+
+Both MCP servers connect to Claude Code. Claude calls TradePilot for deep analysis, calls TradingView for live chart data, and gives you the trade based on what ALL the data says.
+
+---
+
+## Environment Variables
+
+```
+POLYGON_API_KEY=your_api_key_here    # Required - get at polygon.io
+PORT=10000                            # Server port (default 10000)
 ```
 
 ---
 
-## 📊 Example Usage
-```python
-import requests
+## Requirements
 
-# Full analysis
-response = requests.get(
-    "http://localhost:10000/engine18/analyze",
-    params={"symbol": "SPY", "mode": "swing"}
-)
-analysis = response.json()
-
-print(f"Direction: {analysis['analysis_summary']['direction']}")
-print(f"Win Probability: {analysis['analysis_summary']['win_probability']}%")
-```
+- Python 3.11+
+- Polygon.io API key
+- FastAPI, Pandas, NumPy, SciPy (see requirements.txt)
 
 ---
 
-## 🎯 14 High-Probability Playbooks
+## License
 
-**Bullish (CALLS):**
-1. Liquidity Sweep + BOS (85-95%)
-2. CHoCH Reversal (82-92%)
-3. Trend Continuation (80-90%)
-4. FVG Fill + Rejection (81-88%)
-5. Order Block Bounce (79-87%)
-6. Divergence + Structure (80-88%)
-7. VWAP Reclaim (77-85%)
-
-**Bearish (PUTS):**
-8-14. Mirror patterns for bearish setups
-
----
-
-## 🔐 Security & Best Practices
-
-- Never commit `.env` files
-- Keep API keys secure
-- Use environment variables for sensitive data
-- Enable rate limiting for production deployments
-
----
-
-## 📝 License
-
-MIT License - See LICENSE file for details
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! Please open an issue or submit a pull request.
-
----
-
-## 📧 Support
-
-For issues or questions, please open a GitHub issue.
-
-**TradePilot v3.0 - Professional Options Trading Intelligence** 🚀📈
+MIT License - See LICENSE file.
