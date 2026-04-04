@@ -92,34 +92,34 @@ class Layer9Confirmation:
             # Current Timeframe Data
             "current_timeframe": current_timeframe,
             "current_st_direction": int(self.current_st_dir),
-            "current_st_bullish": self.current_st_dir == 1,
-            "current_st_bearish": self.current_st_dir == -1,
+            "current_st_bullish": self.current_st_dir == -1,
+            "current_st_bearish": self.current_st_dir == 1,
             "current_adx": round(float(current_adx.iloc[-1]), 2),
             "current_st_line": round(float(current_st_line.iloc[-1]), 2),
             
             # Per-Timeframe Data
             "tf_5min_direction": mtf_data.get('5', {}).get('direction'),
-            "tf_5min_bullish": mtf_data.get('5', {}).get('direction') == 1,
+            "tf_5min_bullish": mtf_data.get('5', {}).get('direction') == -1,
             "tf_5min_adx": mtf_data.get('5', {}).get('adx'),
             "tf_5min_weight": self.weights['5'],
             
             "tf_15min_direction": mtf_data.get('15', {}).get('direction'),
-            "tf_15min_bullish": mtf_data.get('15', {}).get('direction') == 1,
+            "tf_15min_bullish": mtf_data.get('15', {}).get('direction') == -1,
             "tf_15min_adx": mtf_data.get('15', {}).get('adx'),
             "tf_15min_weight": self.weights['15'],
             
             "tf_1h_direction": mtf_data.get('60', {}).get('direction'),
-            "tf_1h_bullish": mtf_data.get('60', {}).get('direction') == 1,
+            "tf_1h_bullish": mtf_data.get('60', {}).get('direction') == -1,
             "tf_1h_adx": mtf_data.get('60', {}).get('adx'),
             "tf_1h_weight": self.weights['60'],
             
             "tf_4h_direction": mtf_data.get('240', {}).get('direction'),
-            "tf_4h_bullish": mtf_data.get('240', {}).get('direction') == 1,
+            "tf_4h_bullish": mtf_data.get('240', {}).get('direction') == -1,
             "tf_4h_adx": mtf_data.get('240', {}).get('adx'),
             "tf_4h_weight": self.weights['240'],
             
             "tf_1d_direction": mtf_data.get('D', {}).get('direction'),
-            "tf_1d_bullish": mtf_data.get('D', {}).get('direction') == 1,
+            "tf_1d_bullish": mtf_data.get('D', {}).get('direction') == -1,
             "tf_1d_adx": mtf_data.get('D', {}).get('adx'),
             "tf_1d_weight": self.weights['D'],
             
@@ -356,12 +356,12 @@ class Layer9Confirmation:
             weight = self.weights[tf_key]
             total_weight += weight
             
-            # Count bulls and bears
-            if direction == 1:
+            # Count bulls and bears (convention: -1=bullish, 1=bearish)
+            if direction == -1:
                 bull_count += 1
             else:
                 bear_count += 1
-            
+
             # Count alignment with current
             if direction == self.current_st_dir:
                 aligned_count += 1
@@ -369,20 +369,20 @@ class Layer9Confirmation:
             else:
                 not_aligned_count += 1
                 weighted_not_aligned += weight
-            
+
             # Track higher timeframes
             if tf_key in ['60', '240', 'D']:
-                if direction == 1:
+                if direction == -1:
                     htf_bullish_count += 1
                 else:
                     htf_bearish_count += 1
-        
+
         # Calculate alignment percentage
         alignment_pct = (weighted_aligned / total_weight * 100) if total_weight > 0 else 0
-        
+
         # HTF alignment check
         htf_aligned = False
-        if self.current_st_dir == 1:
+        if self.current_st_dir == -1:
             htf_aligned = htf_bullish_count >= 2
         else:
             htf_aligned = htf_bearish_count >= 2

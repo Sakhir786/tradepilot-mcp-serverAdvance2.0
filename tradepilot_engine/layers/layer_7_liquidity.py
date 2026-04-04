@@ -380,7 +380,7 @@ class Layer7Liquidity:
             wick_above = current_high - prev_high
             
             if self.use_close_confirmation:
-                retrace_amount = prev_high - current_close
+                retrace_amount = max(0, prev_high - current_close)
                 bear_retrace = min(retrace_amount / wick_above, 1.0) if wick_above > 0 else 0.0
                 
                 if (bear_retrace >= self.min_retrace and 

@@ -1,6 +1,13 @@
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
+import sys
+
+# Configure loguru
+logger.remove()
+logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} | {level} | {message}")
+logger.add("tradepilot.log", rotation="10 MB", retention="7 days", level="DEBUG")
 from polygon_client import (
     get_symbol_lookup,
     get_candles,

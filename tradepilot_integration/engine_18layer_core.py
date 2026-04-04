@@ -655,64 +655,106 @@ class TradePilotEngine18Layer:
             print(f"[Engine] Brain analysis error: {e}")
             return self._fallback_brain_analysis(layer_data, current_price, mode)
     
-    def _fallback_brain_analysis(self, layer_data: Dict, 
+    def _fallback_brain_analysis(self, layer_data: Dict,
                                  current_price: float, mode: TradeMode) -> Dict:
-        """Fallback analysis when Brain not available"""
-        # Simple directional bias from layers
-        bullish_score = 0
-        bearish_score = 0
-        
+        """Fallback analysis when Brain not available — uses all available layers"""
+        bull = 0
+        bear = 0
+
         # Layer 1: Momentum
         l1 = layer_data.get('layer_1', {})
         if l1.get('momentum_score', 0) > 0:
-            bullish_score += 2
+            bull += 1
         elif l1.get('momentum_score', 0) < 0:
-            bearish_score += 2
-        
+            bear += 1
+        rsi = l1.get('rsi_14')
+        if rsi is not None:
+            if rsi < 30: bull += 1
+            elif rsi > 70: bear += 1
+
+        # Layer 2: Volume
+        l2 = layer_data.get('layer_2', {})
+        if l2.get('obv_slope', 0) > 0: bull += 1
+        elif l2.get('obv_slope', 0) < 0: bear += 1
+
+        # Layer 3: Divergence
+        l3 = layer_data.get('layer_3', {})
+        dc = l3.get('divergence_counts', {})
+        if dc.get('total_bullish_divergences', 0) > 0: bull += 1
+        if dc.get('total_bearish_divergences', 0) > 0: bear += 1
+
+        # Layer 4: Volume Strength
+        l4 = layer_data.get('layer_4', {})
+        if l4.get('buying_volume_pct', 50) > 55: bull += 1
+        elif l4.get('selling_volume_pct', 50) > 55: bear += 1
+
         # Layer 5: Trend
         l5 = layer_data.get('layer_5', {})
-        if l5.get('supertrend_bullish'):
-            bullish_score += 2
-        if l5.get('supertrend_bearish'):
-            bearish_score += 2
-        
+        if l5.get('supertrend_bullish'): bull += 1
+        if l5.get('supertrend_bearish'): bear += 1
+
         # Layer 6: Structure
         l6 = layer_data.get('layer_6', {})
-        if l6.get('bos_bull_detected'):
-            bullish_score += 3
-        if l6.get('bos_bear_detected'):
-            bearish_score += 3
-        
-        # Determine direction
-        if bullish_score > bearish_score and bullish_score >= 4:
+        if l6.get('bos_bull_detected'): bull += 1
+        if l6.get('bos_bear_detected'): bear += 1
+        if l6.get('choch_bull_detected'): bull += 1
+        if l6.get('choch_bear_detected'): bear += 1
+
+        # Layer 7: Liquidity
+        l7 = layer_data.get('layer_7', {})
+        if l7.get('bull_sweep_detected'): bull += 1
+        if l7.get('bear_sweep_detected'): bear += 1
+
+        # Layer 9: MTF Confirmation
+        l9 = layer_data.get('layer_9', {})
+        if l9.get('bull_count', 0) > l9.get('bear_count', 0): bull += 1
+        elif l9.get('bear_count', 0) > l9.get('bull_count', 0): bear += 1
+
+        # Layer 11: Support/Resistance
+        l11 = layer_data.get('layer_11', {})
+        if l11.get('above_daily_pp'): bull += 1
+        elif l11.get('above_daily_pp') is False: bear += 1
+
+        # Layer 12: VWAP
+        l12 = layer_data.get('layer_12', {})
+        if l12.get('price_above_vwap'): bull += 1
+        elif l12.get('price_below_vwap'): bear += 1
+
+        # Determine direction from all layers
+        if bull > bear:
             direction = "BULLISH"
             action = "BUY CALL"
-            win_prob = 70 + (bullish_score * 2)
-        elif bearish_score > bullish_score and bearish_score >= 4:
+        elif bear > bull:
             direction = "BEARISH"
             action = "BUY PUT"
-            win_prob = 70 + (bearish_score * 2)
         else:
             direction = "NEUTRAL"
             action = "FLAT"
-            win_prob = 50
-        
+
+        # DTE based on mode
+        dte_map = {
+            TradeMode.SCALP: 1,
+            TradeMode.INTRADAY: 1,
+            TradeMode.SWING: 30,
+            TradeMode.LEAPS: 365
+        }
+
         return {
             'trade': {
                 'valid': direction != "NEUTRAL",
                 'direction': direction,
                 'action': action,
-                'confidence': 'MODERATE' if win_prob >= 75 else 'WEAK',
-                'win_probability': min(win_prob, 85)
+                'bullish_layers': bull,
+                'bearish_layers': bear
             },
             'playbooks': {'best': None, 'all_checked': []},
             'option': {
                 'strike': current_price,
                 'strike_type': 'ATM',
                 'delta': 0.50,
-                'expiry_dte': 30 if mode == TradeMode.SWING else 1
+                'expiry_dte': dte_map.get(mode, 30)
             },
-            'reasoning': [f"Fallback analysis: {direction} bias detected"],
+            'reasoning': [f"Fallback: {bull} bullish vs {bear} bearish signals across all layers"],
             'concerns': ["Full Brain analysis not available"]
         }
     

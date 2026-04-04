@@ -288,28 +288,26 @@ class Layer5Trend:
     # ==================== WHIPSAW DETECTION ====================
     
     def _detect_whipsaw(self, direction_array: np.ndarray, current_bar: int) -> Dict:
-        """Detect whipsaw conditions (rapid trend flips)"""
-        trend_changed = False
-        if len(direction_array) > 1:
-            trend_changed = direction_array[-1] != direction_array[-2]
-        
-        if trend_changed:
-            if current_bar - self.last_flip_bar < 10:
-                self.flip_count += 1
-            else:
-                self.flip_count = 1
-            self.last_flip_bar = current_bar
-        
-        whipsaw_mode = self.flip_count >= 3
-        
-        # Reset if too long since last flip
-        if current_bar - self.last_flip_bar > 20:
-            self.flip_count = 0
-        
+        """Detect whipsaw conditions (rapid trend flips) from direction history"""
+        # Count direction changes in last 20 bars from the array itself
+        lookback = min(20, len(direction_array) - 1)
+        recent = direction_array[-lookback - 1:]
+        changes = np.diff(recent)
+        flip_indices = np.where(changes != 0)[0]
+        flip_count = len(flip_indices)
+
+        # Bars since last flip
+        if flip_count > 0:
+            bars_since_flip = lookback - flip_indices[-1]
+        else:
+            bars_since_flip = lookback
+
+        whipsaw_mode = flip_count >= 3
+
         return {
             "whipsaw_mode": whipsaw_mode,
-            "flip_count": self.flip_count,
-            "bars_since_flip": current_bar - self.last_flip_bar
+            "flip_count": int(flip_count),
+            "bars_since_flip": int(bars_since_flip)
         }
     
     # ==================== VOLUME ANALYSIS ====================

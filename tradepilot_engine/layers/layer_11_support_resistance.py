@@ -163,8 +163,8 @@ class Layer11SupportResistance:
             "nearest_resistance": nearest_resistance,
             "distance_to_support": round(current_price - nearest_support, 2) if nearest_support else None,
             "distance_to_resistance": round(nearest_resistance - current_price, 2) if nearest_resistance else None,
-            "distance_to_support_pct": round((current_price - nearest_support) / current_price * 100, 2) if nearest_support else None,
-            "distance_to_resistance_pct": round((nearest_resistance - current_price) / current_price * 100, 2) if nearest_resistance else None,
+            "distance_to_support_pct": round((current_price - nearest_support) / current_price * 100, 2) if nearest_support and current_price != 0 else None,
+            "distance_to_resistance_pct": round((nearest_resistance - current_price) / current_price * 100, 2) if nearest_resistance and current_price != 0 else None,
             
             # Price Context
             "price_above_daily_pp": current_price > pivots.get('daily', {}).get('PP', 0) if pivots.get('daily', {}).get('PP') else None,

@@ -230,22 +230,29 @@ async def quick_signal(
     try:
         engine = get_engine()
         symbol = symbol.upper()
-        
-        trade_mode = TradeMode.SCALP if mode == TradeModeParam.scalp else TradeMode.SWING
-        
-        # Fetch minimal candle data
-        candles_data = get_candles(symbol, tf="day", limit=200)
-        
+
+        trade_mode = {
+            TradeModeParam.scalp: TradeMode.SCALP,
+            TradeModeParam.swing: TradeMode.SWING,
+            TradeModeParam.intraday: TradeMode.INTRADAY,
+            TradeModeParam.leaps: TradeMode.LEAPS
+        }.get(mode, TradeMode.SWING)
+
+        # Use mode-specific data fetching
+        candles_data = get_candles_for_mode(symbol, mode=mode.value)
+        mode_config = candles_data.get("_mode_config", {})
+        tf = f"{mode_config.get('multiplier', 1)}{mode_config.get('timespan', 'day')[0]}"
+
         if not candles_data or "results" not in candles_data:
             raise HTTPException(status_code=400, detail=f"Unable to fetch data for {symbol}")
-        
+
         # Run analysis (without options for speed)
         result = engine.analyze(
             ticker=symbol,
             candles_data=candles_data,
             options_data=None,
             mode=trade_mode,
-            timeframe="day"
+            timeframe=tf
         )
         
         return convert_numpy_types({
@@ -287,7 +294,12 @@ async def scan_tickers(
     try:
         engine = get_engine()
         ticker_list = [s.strip().upper() for s in symbols.split(",")][:20]
-        trade_mode = TradeMode.SCALP if mode == TradeModeParam.scalp else TradeMode.SWING
+        trade_mode = {
+            TradeModeParam.scalp: TradeMode.SCALP,
+            TradeModeParam.swing: TradeMode.SWING,
+            TradeModeParam.intraday: TradeMode.INTRADAY,
+            TradeModeParam.leaps: TradeMode.LEAPS
+        }.get(mode, TradeMode.SWING)
         results = []
         
         for symbol in ticker_list:
@@ -384,14 +396,19 @@ async def compare_setups(
     try:
         engine = get_engine()
         ticker_list = [s.strip().upper() for s in symbols.split(",")][:5]  # Max 5 for comparison
-        
-        trade_mode = TradeMode.SCALP if mode == TradeModeParam.scalp else TradeMode.SWING
-        
+
+        trade_mode = {
+            TradeModeParam.scalp: TradeMode.SCALP,
+            TradeModeParam.swing: TradeMode.SWING,
+            TradeModeParam.intraday: TradeMode.INTRADAY,
+            TradeModeParam.leaps: TradeMode.LEAPS
+        }.get(mode, TradeMode.SWING)
+
         comparisons = []
-        
+
         for symbol in ticker_list:
             try:
-                candles_data = get_candles(symbol, tf="day", limit=730)
+                candles_data = get_candles_for_mode(symbol, mode=mode.value)
                 options_data = None
                 try:
                     options_data = get_option_chain_snapshot(symbol, limit=50)
