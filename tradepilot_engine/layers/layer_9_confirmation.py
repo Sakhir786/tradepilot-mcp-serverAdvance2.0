@@ -171,31 +171,31 @@ class Layer9Confirmation:
         final_upperband[0] = upperband[0]
         final_lowerband[0] = lowerband[0]
         supertrend[0] = final_upperband[0]
-        direction[0] = -1
-        
+        direction[0] = 1  # Convention: 1=bearish, -1=bullish (matches Layer 5)
+
         for i in range(1, len(df)):
             if upperband[i] < final_upperband[i-1] or close[i-1] > final_upperband[i-1]:
                 final_upperband[i] = upperband[i]
             else:
                 final_upperband[i] = final_upperband[i-1]
-            
+
             if lowerband[i] > final_lowerband[i-1] or close[i-1] < final_lowerband[i-1]:
                 final_lowerband[i] = lowerband[i]
             else:
                 final_lowerband[i] = final_lowerband[i-1]
-            
+
             if supertrend[i-1] == final_upperband[i-1] and close[i] <= final_upperband[i]:
                 supertrend[i] = final_upperband[i]
-                direction[i] = -1
+                direction[i] = 1  # Bearish (below upperband)
             elif supertrend[i-1] == final_upperband[i-1] and close[i] > final_upperband[i]:
                 supertrend[i] = final_lowerband[i]
-                direction[i] = 1
+                direction[i] = -1  # Bullish (broke above)
             elif supertrend[i-1] == final_lowerband[i-1] and close[i] >= final_lowerband[i]:
                 supertrend[i] = final_lowerband[i]
-                direction[i] = 1
+                direction[i] = -1  # Bullish (above lowerband)
             elif supertrend[i-1] == final_lowerband[i-1] and close[i] < final_lowerband[i]:
                 supertrend[i] = final_upperband[i]
-                direction[i] = -1
+                direction[i] = 1  # Bearish (broke below)
             else:
                 supertrend[i] = supertrend[i-1]
                 direction[i] = direction[i-1]

@@ -123,18 +123,14 @@ class Layer4VolumeStrength:
         percent_lower_wick = lower_wick / spread
         percent_body_length = body_length / spread
         
-        # Calculate buying and selling volume (EXACT Pine Script logic)
-        buying_volume = np.where(
-            close > open_,
-            (percent_body_length + (percent_upper_wick + percent_lower_wick) / 2) * volume,
-            ((percent_upper_wick + percent_lower_wick) / 2) * volume
-        )
-        
-        selling_volume = np.where(
-            close < open_,
-            (percent_body_length + (percent_upper_wick + percent_lower_wick) / 2) * volume,
-            ((percent_upper_wick + percent_lower_wick) / 2) * volume
-        )
+        # Calculate buying and selling volume
+        # Use close position within high-low range for accurate distribution
+        # This correctly handles all candle types including reversals and dojis
+        buy_ratio = np.where(spread > 0, (close - low) / spread, 0.5)
+        sell_ratio = np.where(spread > 0, (high - close) / spread, 0.5)
+
+        buying_volume = buy_ratio * volume
+        selling_volume = sell_ratio * volume
         
         # Apply EMA smoothing (cumulation_length = 14)
         cumulative_buying_volume = self._ema(buying_volume, self.cvd_cumulation_length)
